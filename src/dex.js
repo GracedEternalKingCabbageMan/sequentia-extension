@@ -1,0 +1,306 @@
+// DEX taker engine: fills resting orders for the SeqDEX site.
+//
+// Two settlement families, both ported from the proven web-wallet paths:
+//  - Same-chain interactive fill (swap.js liftOffer): the taker builds its
+//    half with Wollet.seqdexSwapRequest, the maker co-signs over the SeqOB
+//    relay courier (vendor/seqob.js), and the taker signs + self-broadcasts.
+//  - Pure-Lightning swap (swap.js plnSwapBody path): the LSP drives the swap
+//    on the user's OWN hosted nodes; both device signers co-sign; instant and
+//    final when settled.
+//
+// SECURITY: the wallet NEVER trusts the site's numbers. The site names an
+// offer (mount, pair, offer_id) and a take size; the wallet re-fetches the
+// offer from the relay itself, recomputes the amounts with the daemon's exact
+// proRata / slice math, and shows THOSE in the approval window.
+
+import { AssetId, Pset } from '../pkg/lwk_wasm.js';
+import * as seqob from '../vendor/seqob.js';
+import { seqlnSwap, seqlnChannelInbound, waitNodeReady } from '../vendor/seqln.js';
+import * as A from './assets.js';
+import * as engine from './engine.js';
+import * as ln from './ln.js';
+import { BASE, DEFAULT_FEERATE, EXCHANGE_RATE_SCALE } from './config.js';
+import { fmtAtoms } from './util.js';
+
+const MOUNTS = {
+  ln: BASE + '/seqob-pln',
+  chain: BASE + '/seqob',
+  conf: BASE + '/seqob-conf',
+};
+const EST_SWAP_VSIZE = 1500n;   // explicit same-chain swap fee estimate (vbytes)
+
+let progressSink = null;
+export function setProgressSink(fn) { progressSink = fn; }
+function say(t) { try { progressSink && progressSink(t); } catch {} }
+
+// ---- the relay is the source of truth for offer terms ----
+export async function fetchOffer(mount, base, quote, offerId) {
+  const url = `${MOUNTS[mount]}/v1/market/${encodeURIComponent(base)}/${encodeURIComponent(quote)}/orderbook`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('order book unreachable (HTTP ' + r.status + ')');
+  const j = await r.json();
+  const o = (j.offers || []).find((x) => x.offer_id === offerId);
+  if (!o) throw new Error('that offer is no longer on the book; refresh and pick another');
+  const now = Math.floor(Date.now() / 1000);
+  if (Number(o.expires_at_unix || 0) > 0 && Number(o.expires_at_unix) <= now) throw new Error('that offer has expired');
+  return o;
+}
+
+const big = (v) => BigInt(v ?? 0);
+const ceilDiv = (a, b) => (a + b - 1n) / b;
+
+// ---- same-chain fill ------------------------------------------------------
+
+// The daemon's exact proRata: recv = floor(offer*take/base), pay = ceil(want*take/base).
+export function sameChainQuote(o, takeBase) {
+  const baseAmt = big(o.base_amount), offerAmt = big(o.offer_amount), wantAmt = big(o.want_amount);
+  if (baseAmt <= 0n) throw new Error('malformed offer');
+  let take = big(takeBase);
+  if (take < 1n) take = 1n;
+  if (take > baseAmt) take = baseAmt;
+  const recv = (offerAmt * take) / baseAmt;   // taker RECEIVES the maker's offer_asset
+  const pay = ceilDiv(wantAmt * take, baseAmt); // taker PAYS the maker's want_asset
+  if (recv <= 0n || pay <= 0n) throw new Error('that take size prices to zero; increase it');
+  return { take, payAsset: o.want_asset, payAtoms: pay, recvAsset: o.offer_asset, recvAtoms: recv, capped: take >= baseAmt };
+}
+
+// Open-fee-market fee for the swap tx: the native policy fee converted into
+// the chosen fee asset at its published rate. Prefer paying the fee in the
+// asset being paid, else the asset received, else tSEQ; only priced assets.
+function pickFee(payAsset, recvAsset) {
+  const candidates = [payAsset, recvAsset, A.policyHex()];
+  for (const a of candidates) {
+    try {
+      const rate = A.feeRateFor(a);
+      const nativeFeeSats = (BigInt(DEFAULT_FEERATE) * EST_SWAP_VSIZE) / 1000n;
+      const amount = ceilDiv(nativeFeeSats * BigInt(EXCHANGE_RATE_SCALE), rate);
+      return { feeAsset: a, feeAmount: amount, feeRate: rate };
+    } catch {}
+  }
+  throw new Error('no fee-priced asset available for the swap fee');
+}
+
+// Prepare a same-chain fill: verify against the relay, compute the exact
+// amounts, and return { display, exec } for the approval flow.
+export async function prepareOnchainFill({ mount = 'chain', base, quote, offerId, takeBase, confidential = false }) {
+  if (!(await engine.ensureOpen())) throw new Error('the wallet is locked');
+  const o = await fetchOffer(mount, base, quote, offerId);
+  if (o.cross_chain) throw new Error('cross-chain offers are not fillable from the site yet');
+  if (o.covenant) throw new Error('covenant offers are not fillable from the site yet');
+  if (!o.same_chain || !o.same_chain.maker_recv_address) throw new Error('this offer has no same-chain settlement terms');
+  if (confidential && !o.confidential) throw new Error('this is not a confidential-book offer');
+  const q = sameChainQuote(o, takeBase);
+  const fee = pickFee(q.payAsset, q.recvAsset);
+  const pm = A.assetMeta(q.payAsset), rm = A.assetMeta(q.recvAsset), fm = A.assetMeta(fee.feeAsset);
+
+  const have = engine.availableFor(q.payAsset);
+  if (have < q.payAtoms + (fee.feeAsset === q.payAsset ? fee.feeAmount : 0n)) {
+    throw new Error('not enough ' + pm.ticker + ' to fill this: it costs ' + fmtAtoms(q.payAtoms, pm.precision) + ' plus the network fee');
+  }
+
+  const display = {
+    text: 'Fill a resting order on the SeqDEX ' + (confidential ? 'confidential' : 'on-chain') + ' book.',
+    deltas: [
+      { ticker: pm.ticker, atoms: '-' + q.payAtoms.toString(), precision: pm.precision || 0 },
+      { ticker: rm.ticker, atoms: q.recvAtoms.toString(), precision: rm.precision || 0 },
+    ],
+    detail: (q.capped ? 'Fills the whole offer. ' : 'Partial fill at the offer’s exact ratio. ')
+      + 'Network fee ≈ ' + fmtAtoms(fee.feeAmount, fm.precision || 0) + ' ' + fm.ticker
+      + (confidential ? ' · settles as a blinded transaction' : '')
+      + ' · atomic: one transaction moves both sides or nothing moves.',
+  };
+
+  const exec = async () => {
+    seqob.setSeqobBase(MOUNTS[mount]);
+    const wollet = engine.getWollet(), signer = engine.getSigner(), client = engine.getClient();
+    // Receive transparently by default; a confidential-book fill receives to
+    // the blinded address (both legs must blind or the ratio leaks amounts).
+    const receiveAddr = engine.rawAddress(confidential);
+    const buildRequest = async () => engine.withWollet(async () => {
+      const sreq = wollet.seqdexSwapRequest(
+        new AssetId(q.payAsset), q.payAtoms,
+        new AssetId(q.recvAsset), q.recvAtoms,
+        receiveAddr,
+        new AssetId(fee.feeAsset), fee.feeAmount, fee.feeRate,
+      );
+      return sreq.toJson();
+    });
+    const finalizeAccept = async (acc) => engine.withWollet(async () => {
+      const pset = new Pset(acc.transaction);
+      pset.addDetails(wollet);
+      const signed = signer.sign(pset);
+      const strippedB64 = stripBip32(signed.toString());
+      const finalized = wollet.finalize(new Pset(strippedB64));
+      const txid = await client.broadcast(finalized);
+      try { wollet.applyTransaction(finalized); } catch {}
+      engine.noteOwn(finalized);
+      return { transaction: strippedB64, txid: txid.toString() };
+    });
+    const res = await seqob.lift(o, q.take, fee.feeAsset, { buildRequest, finalizeAccept, onStatus: say });
+    engine.sync().catch(() => {});
+    return {
+      txid: (res && res.txid) || null,
+      paid: { asset: q.payAsset, atoms: q.payAtoms.toString() },
+      received: { asset: q.recvAsset, atoms: q.recvAtoms.toString() },
+    };
+  };
+
+  return { display, exec };
+}
+
+// ---- pure-Lightning swap ---------------------------------------------------
+
+// Partial-fill slice pricing, the exact mirror of the Go taker (xdriver_pureln
+// RunTakerPureLN): quote msat derived from the signed offer's ratio; floor
+// when the taker GIVES the quote side (buy), ceil when it RECEIVES it (sell).
+export function plnSliceQuote(side, takeAtoms, offerAssetAtoms, offerQuoteAtoms) {
+  const take = big(takeAtoms), oa = big(offerAssetAtoms), oq = big(offerQuoteAtoms);
+  if (take <= 0n || oa <= 0n || oq <= 0n) return null;
+  if (take >= oa) return { whole: true, takeAtoms: oa, quoteAtoms: oq, dust: oq <= 0n };
+  const num = oq * take * 1000n;
+  const msat = side === 'sell' ? (num + oa - 1n) / oa : num / oa;
+  const quoteAtoms = msat / 1000n;
+  return { whole: false, takeAtoms: take, quoteAtoms, dust: quoteAtoms <= 0n };
+}
+
+export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
+  if (!(await engine.ensureOpen())) throw new Error('the wallet is locked');
+  const o = await fetchOffer('ln', base, quote, offerId);
+  const ld = o.lightning ? Number(o.lightning.ln_direction ?? -1) : -1;
+  if (ld !== 2 && ld !== 3) throw new Error('this offer does not settle purely over Lightning');
+
+  // Taking the other side of the maker's direction.
+  const makerBuys = o.trade_dir === 'TRADE_DIR_BUY';
+  const side = makerBuys ? 'sell' : 'buy';           // taker sells base into a bid, buys base from an ask
+  const offerAssetAtoms = big(o.base_amount);
+  const offerQuoteAtoms = big(makerBuys ? o.offer_amount : o.want_amount);
+  const q = plnSliceQuote(side, takeAtoms ?? offerAssetAtoms, offerAssetAtoms, offerQuoteAtoms);
+  if (!q) throw new Error('malformed offer amounts');
+  if (q.dust) throw new Error('that take size prices to zero on the other leg; increase it');
+
+  const bm = A.assetMeta(base);
+  const qm = quote === 'BTC' ? { ticker: 'BTC', precision: 8 } : A.assetMeta(quote);
+  const payTicker = side === 'buy' ? qm.ticker : bm.ticker;
+  const payAtoms = side === 'buy' ? q.quoteAtoms : q.takeAtoms;
+  const payPrec = side === 'buy' ? qm.precision : bm.precision;
+  const recvTicker = side === 'buy' ? bm.ticker : qm.ticker;
+  const recvAtoms = side === 'buy' ? q.takeAtoms : q.quoteAtoms;
+  const recvPrec = side === 'buy' ? bm.precision : qm.precision;
+
+  const display = {
+    text: 'Swap over Lightning on the LNDEX. Instant and final when it settles; nothing moves on-chain.',
+    deltas: [
+      { ticker: payTicker, atoms: '-' + payAtoms.toString(), precision: payPrec || 0 },
+      { ticker: recvTicker, atoms: recvAtoms.toString(), precision: recvPrec || 0 },
+    ],
+    detail: (q.whole ? 'Fills the whole resting offer. ' : 'Partial fill at the offer’s exact ratio. ')
+      + 'Both legs travel through your own Lightning channels; if it stalls, nothing moves and your funds are returned automatically.',
+  };
+
+  const exec = async () => {
+    ln.lnInit();
+    const counterKind = quote === 'BTC' ? 'BTC' : quote;
+    say('Bringing your ' + bm.ticker + ' Lightning node online…');
+    const provBase = await ln.connectOwnNode(base);
+    await waitNodeReady({ nodeKey: provBase.key, onProgress: () => say('Preparing your ' + bm.ticker + ' node…') });
+    say('Bringing your ' + qm.ticker + ' Lightning node online…');
+    const provCounter = await ln.connectOwnNode(counterKind);
+    await waitNodeReady({ nodeKey: provCounter.key, onProgress: () => say('Preparing your ' + qm.ticker + ' node…') });
+    // Best-effort JIT inbound on the RECEIVING leg (a funded channel may
+    // already have room; the LSP tops up when it does not).
+    say('Ensuring inbound capacity on your receiving leg…');
+    try {
+      if (side === 'buy') await seqlnChannelInbound({ node_key: provBase.key, asset: base, amount: Number(recvAtoms) });
+      else await seqlnChannelInbound({ node_key: provCounter.key, asset: quote === 'BTC' ? undefined : quote, amount: Number(recvAtoms) });
+    } catch {}
+    say('Settling over Lightning…');
+    const body = {
+      side, asset: base,
+      amount: Number(q.takeAtoms) / Math.pow(10, bm.precision || 0),
+      quote_asset: quote === 'BTC' ? undefined : quote,
+      node_key: provBase.key,
+      counter_node_key: provCounter.key,
+      offer_id: o.offer_id, maker_pubkey: o.maker_pubkey,
+      take_atoms: q.whole ? undefined : Number(q.takeAtoms),
+    };
+    const r = await seqlnSwap(body);
+    return {
+      settled: true,
+      direction: r.direction || (side === 'sell' ? 'sold' : 'bought'),
+      baseAtoms: String(r.base_amount ?? q.takeAtoms),
+      quoteAtoms: String(r.quote_amount ?? q.quoteAtoms),
+      preimage: r.preimage || null,
+      paymentHash: r.hash_h || null,
+    };
+  };
+
+  return { display, exec };
+}
+
+// ---- PSET bip32-derivation stripping (verbatim from the proven web-wallet
+// path: the maker's co-signed PSET carries our bip32 derivations; the node
+// rejects finalized PSETs that still carry them) ----
+function b64ToBytes(b64) {
+  const bin = atob(b64.trim()); const a = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
+  return a;
+}
+function bytesToB64(a) {
+  let s = ''; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
+  return btoa(s);
+}
+export function stripBip32(b64) {
+  const b = b64ToBytes(b64);
+  const magic = [0x70, 0x73, 0x65, 0x74, 0xff];
+  for (let i = 0; i < 5; i++) if (b[i] !== magic[i]) throw new Error('not a PSET');
+  let i = 5;
+  const out = [0x70, 0x73, 0x65, 0x74, 0xff];
+  const rdVarint = () => {
+    const x = b[i++];
+    if (x < 0xfd) return x;
+    if (x === 0xfd) { const v = b[i] | (b[i + 1] << 8); i += 2; return v; }
+    if (x === 0xfe) { const v = (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0; i += 4; return v; }
+    let v = 0; for (let k = 0; k < 8; k++) v += b[i + k] * Math.pow(2, 8 * k); i += 8; return v;
+  };
+  const emitVarint = (v) => {
+    if (v < 0xfd) out.push(v);
+    else if (v <= 0xffff) { out.push(0xfd, v & 0xff, (v >> 8) & 0xff); }
+    else if (v <= 0xffffffff) { out.push(0xfe, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff); }
+    else { out.push(0xff); for (let k = 0; k < 8; k++) { out.push(Math.floor(v / Math.pow(2, 8 * k)) & 0xff); } }
+  };
+  const copyMap = (dropTypes) => {
+    while (true) {
+      const klen = rdVarint();
+      if (klen === 0) { out.push(0x00); break; }
+      const keyStart = i; const keyType = b[i];
+      i += klen;
+      const vlen = rdVarint();
+      const valStart = i; i += vlen;
+      if (dropTypes.has(keyType)) continue;
+      emitVarint(klen); for (let k = keyStart; k < keyStart + klen; k++) out.push(b[k]);
+      emitVarint(vlen); for (let k = valStart; k < valStart + vlen; k++) out.push(b[k]);
+    }
+  };
+  let inCount = 0, outCount = 0;
+  {
+    let j = 5;
+    const pv = () => {
+      const x = b[j++];
+      if (x < 0xfd) return x;
+      if (x === 0xfd) { const v = b[j] | (b[j + 1] << 8); j += 2; return v; }
+      if (x === 0xfe) { const v = (b[j] | (b[j + 1] << 8) | (b[j + 2] << 16) | (b[j + 3] << 24)) >>> 0; j += 4; return v; }
+      let v = 0; for (let k = 0; k < 8; k++) v += b[j + k] * Math.pow(2, 8 * k); j += 8; return v;
+    };
+    while (true) {
+      const kl = pv(); if (kl === 0) break;
+      const kt = b[j]; j += kl;
+      const vl = pv(); const vs = j; j += vl;
+      if (kt === 0x04) { let v = 0; for (let k = 0; k < vl; k++) v += b[vs + k] * Math.pow(2, 8 * k); inCount = v; }
+      if (kt === 0x05) { let v = 0; for (let k = 0; k < vl; k++) v += b[vs + k] * Math.pow(2, 8 * k); outCount = v; }
+    }
+  }
+  copyMap(new Set([0x01]));
+  for (let n = 0; n < inCount; n++) copyMap(new Set([0x06]));
+  for (let n = 0; n < outCount; n++) copyMap(new Set([0x02]));
+  return bytesToB64(Uint8Array.from(out));
+}

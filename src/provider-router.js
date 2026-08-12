@@ -9,6 +9,7 @@ import * as engine from './engine.js';
 import * as perms from './permissions.js';
 import * as openamp from './openamp.js';
 import * as ln from './ln.js';
+import * as dex from './dex.js';
 import * as A from './assets.js';
 import { sessionMnemonic } from './vault.js';
 
@@ -113,7 +114,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         network: engine.getNetworkName(),
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -173,6 +174,35 @@ export async function handleDappRequest(origin, method, params = {}) {
       await requireUnlockedAndConnected(origin);
       const b = await engine.balances();
       return await ln.channelsSerialized(Object.keys(b.seq));
+    }
+
+    case 'dexFillOnchain': {
+      // Fill a resting same-chain (or confidential-book) order. The wallet
+      // re-fetches the offer from the relay and recomputes every amount; the
+      // site only names the offer and the take size.
+      await requireConnected(origin);
+      if (!(await sessionMnemonic())) throw new Error('the wallet is locked; open the wallet popup and unlock first');
+      const prep = await dex.prepareOnchainFill({
+        mount: params.mount === 'conf' ? 'conf' : 'chain',
+        base: String(params.base || ''), quote: String(params.quote || ''),
+        offerId: String(params.offerId || ''),
+        takeBase: String(params.takeBase || '0'),
+        confidential: params.mount === 'conf',
+      });
+      return requestApproval(origin, 'dexFillOnchain', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
+    }
+
+    case 'dexSwapLn': {
+      // LNDEX taker swap: both legs over the user's own Lightning channels.
+      await requireConnected(origin);
+      if (!(await sessionMnemonic())) throw new Error('the wallet is locked; open the wallet popup and unlock first');
+      const prep = await dex.prepareLnSwap({
+        base: String(params.base || ''),
+        quote: String(params.quote || 'BTC'),
+        offerId: String(params.offerId || ''),
+        takeAtoms: params.takeAtoms != null ? String(params.takeAtoms) : undefined,
+      });
+      return requestApproval(origin, 'dexSwapLn', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
     }
 
     case 'lnRequestInbound': {

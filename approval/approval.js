@@ -20,6 +20,8 @@ const TITLES = {
   createInvoice: 'Create a Lightning invoice?',
   payInvoice: 'Pay a Lightning invoice?',
   lnRequestInbound: 'Request inbound Lightning capacity?',
+  dexFillOnchain: 'Fill this order on-chain?',
+  dexSwapLn: 'Swap over Lightning?',
 };
 
 function fmtAtoms(atoms, d) {
