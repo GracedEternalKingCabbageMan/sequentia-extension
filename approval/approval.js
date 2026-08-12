@@ -19,6 +19,7 @@ const TITLES = {
   signPset: 'Sign a transaction?',
   createInvoice: 'Create a Lightning invoice?',
   payInvoice: 'Pay a Lightning invoice?',
+  lnRequestInbound: 'Request inbound Lightning capacity?',
 };
 
 function fmtAtoms(atoms, d) {

@@ -102,6 +102,32 @@ assets cannot travel over Lightning). Returns `{ bolt11 }`.
 Pays a bolt11 invoice from the user's Lightning balance for that asset
 (default BTC). Returns `{ paid: true, preimage }`.
 
+## v0.2 methods (added for the SeqDEX site)
+
+### `getUtxos({ asset? })` — silent, requires connection
+The wallet's unspent outputs, optionally filtered to one asset:
+```js
+{ utxos: [{ txid, vout, asset, value, scriptPubkey, address, height }] }
+```
+`value` is an atoms string. The DEX composes swap PSETs from these and sends
+them back through `signPset`, where the user approves the actual spend — so
+this read reveals holdings the origin could already infer from
+`getBalances`, never spend authority.
+
+### `lnChannels()` — silent, requires connection
+Per-asset Lightning capacity on the user's own channels — the LNDEX
+prerequisite check:
+```js
+{ deployed: true, channels: [{ kind: 'BTC' | '<assetHex>', scid, state,
+                               spendable: '<atoms>', receivable: '<atoms>' | null }] }
+```
+
+### `lnRequestInbound({ amount, asset? })` — approval per request
+Requests inbound Lightning capacity (JIT liquidity from the LSP) so the
+wallet can RECEIVE up to `amount` atoms of `asset` (default BTC) over
+Lightning. May provision or extend a channel to the user's hosted node.
+Phase one of the channel marketplace.
+
 ## Events
 
 Subscribe with `window.sequentia.on(event, handler)`:

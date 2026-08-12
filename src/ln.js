@@ -152,6 +152,51 @@ export function capableKinds(heldHexes) {
   return ['BTC', ...heldHexes.filter((h) => { const e = A.feeRateEntry(h); return e && e.rate > 0; })];
 }
 
+// Per-kind channel detail for the website provider (the LNDEX gate: a trade
+// needs spendable capacity to send and receivable capacity to get paid).
+// Serializable, own channels only.
+export async function channelsSerialized(heldHexes) {
+  lnInit();
+  if (!seqlnState().deployed) return { deployed: false, channels: [] };
+  await refreshStatus();
+  const chs = (lastStatus && lastStatus.channels) || [];
+  const out = [];
+  for (const c of chs) {
+    if (!c.node_key) continue;
+    if (!String(c.state || '').startsWith('CHANNELD')) continue;
+    const isBtc = (c.asset_label === 'BTC' || c.leg === 'btc');
+    let kind = isBtc ? 'BTC' : (c.asset || null);
+    if (!kind) {
+      // Some LSP builds only echo the ticker; resolve it against held assets.
+      const hit = heldHexes.find((h) => A.assetMeta(h).ticker === c.asset_label);
+      kind = hit || null;
+    }
+    if (!kind) continue;
+    out.push({
+      kind,
+      scid: c.short_channel_id || null,
+      state: c.state,
+      spendable: String(Math.round(Number(c.spendable_units || 0))),
+      receivable: c.receivable_units != null ? String(Math.round(Number(c.receivable_units))) : null,
+    });
+  }
+  return { deployed: true, channels: out };
+}
+
+// Marketplace phase one: buy JIT inbound liquidity from the LSP for `kind`.
+export async function requestInbound({ kind, atoms }) {
+  lnInit();
+  const meta = kind === 'BTC' ? { ticker: 'BTC' } : A.assetMeta(kind);
+  say('Bringing your ' + meta.ticker + ' Lightning node online…');
+  const prov = await connectOwnNode(kind);
+  say('Preparing your Lightning node…');
+  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node…') });
+  say('Requesting inbound capacity…');
+  const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
+  const r = await seqlnChannelInbound({ node_key, asset: kind === 'BTC' ? undefined : kind, amount: Number(atoms) });
+  return { ok: true, result: r ?? null };
+}
+
 // ---- invoice / pay ----
 export async function createInvoice({ kind, atoms, memo }) {
   lnInit();

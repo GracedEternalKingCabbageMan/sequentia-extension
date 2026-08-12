@@ -112,7 +112,8 @@ export async function handleDappRequest(origin, method, params = {}) {
         version: chrome.runtime.getManifest().version,
         network: engine.getNetworkName(),
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
-          'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice'],
+          'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice',
+          'getUtxos', 'lnChannels', 'lnRequestInbound'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -155,6 +156,35 @@ export async function handleDappRequest(origin, method, params = {}) {
       const oamp = {};
       for (const [id, atoms] of Object.entries(openamp.balancesMap())) oamp['oamp:' + id] = atoms;
       return { assets: b.seq, btc: b.btc, openamp: oamp };
+    }
+
+    case 'getUtxos': {
+      // Silent read: the DEX composes swap PSETs from these and returns them
+      // through signPset, where the user approves the actual spend.
+      await requireUnlockedAndConnected(origin);
+      await engine.syncIfStale();
+      let utxos = engine.utxosSerialized();
+      if (params.asset) utxos = utxos.filter((u) => u.asset === params.asset);
+      return { utxos };
+    }
+
+    case 'lnChannels': {
+      // Silent read: per-asset Lightning capacity (the LNDEX prerequisite).
+      await requireUnlockedAndConnected(origin);
+      const b = await engine.balances();
+      return await ln.channelsSerialized(Object.keys(b.seq));
+    }
+
+    case 'lnRequestInbound': {
+      await requireConnected(origin);
+      const kind = params.asset && params.asset !== 'BTC' ? String(params.asset) : 'BTC';
+      const atoms = String(params.amount ?? '');
+      if (!/^\d+$/.test(atoms) || BigInt(atoms) <= 0n) throw new Error('amount (atoms) is required');
+      const ticker = kind === 'BTC' ? 'BTC' : A.assetMeta(kind).ticker;
+      return requestApproval(origin, 'lnRequestInbound', {
+        text: origin + ' asks your wallet to request inbound Lightning capacity.',
+        detail: 'Inbound capacity to receive up to ' + engine.fmt(atoms, kind === 'BTC' ? 'BTC' : kind) + ' ' + ticker + ' over Lightning. This may open or extend a channel to your hosted node.',
+      }, async () => { await ensureOpenOrThrow(); return await ln.requestInbound({ kind, atoms }); });
     }
 
     case 'getAddress': {
