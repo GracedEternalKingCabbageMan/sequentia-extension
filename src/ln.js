@@ -16,6 +16,10 @@ import {
   seqlnNodePay, provisionAndConnect, waitNodeReady, deviceTransportPubkey,
   registerOwnStatusKeys, closeChannelLsp, fundChannel, resumeFundChannel,
 } from '../vendor/seqln.js';
+// Statically imported and injected into seqln.js: the HTML spec disallows
+// dynamic import() on ServiceWorkerGlobalScope, so the lazy sdkPath load that
+// works on the web wallet page throws here.
+import * as signerSdk from '../vendor/lightning/seqln-signer-sdk.js';
 import { lnDeriveNode, lnDeriveAsset } from '../vendor/seqln-keys.js';
 import { LSP } from './config.js';
 import * as A from './assets.js';
@@ -33,7 +37,7 @@ export function lnInit() {
   initSeqln({
     lspUrl: LSP.url,
     token: LSP.token,
-    sdkPath: '../vendor/lightning/seqln-signer-sdk.js',
+    sdk: signerSdk,
     nodes: {
       asset: { wsUrl: LSP.wsAsset, hostPubkey: LSP.hostPubkeyAsset },
       btc: { wsUrl: LSP.wsBtc, hostPubkey: LSP.hostPubkeyBtc },

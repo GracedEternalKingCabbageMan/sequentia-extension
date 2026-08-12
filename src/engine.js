@@ -162,6 +162,13 @@ export async function openFromPhrase(phrase) {
   scannedOnce = false;
   _cacheRestored = false; _cachePersisted = false;
   await restoreWolletState();
+  // Restore the receive index across service-worker restarts: a fresh worker
+  // otherwise serves addresses from the (possibly stale) restored scan view
+  // and can hand out an already-used address before the first sync.
+  try {
+    const s = await stGet('local', 'ext.addrIndex');
+    if (s && s.desc === wollet.descriptor().toString() && Number.isInteger(s.index)) addrIndex = s.index;
+  } catch {}
 }
 
 // Validate a mnemonic without opening anything (onboarding import).
@@ -196,6 +203,7 @@ export async function sync() {
       refreshScanCacheBase();   // off-path; no-op once a base exists
       scannedOnce = true;
       addrIndex = Math.max(addrIndex ?? 0, unifiedNextUnused());
+      persistAddrIndex();
       await stSet('local', 'ext.balCache', serializeBalances());
       await stSet('local', 'ext.lastSyncAt', Date.now());
     } finally {
@@ -250,10 +258,16 @@ function unifiedNextUnused() {
   try { lwkNext = wollet.address(undefined).index(); } catch {}
   return Math.max(lwkNext, btcScanState.externalNext);
 }
+// Fire-and-forget: remember the served index per descriptor so a worker
+// restart never cycles the receive address backwards.
+function persistAddrIndex() {
+  try { stSet('local', 'ext.addrIndex', { desc: wollet.descriptor().toString(), index: addrIndex }).catch(() => {}); } catch {}
+}
 export function currentAddress(confidential = false) {
   if (!wollet) throw new Error('wallet is locked');
   const r = wollet.address(addrIndex == null ? undefined : addrIndex);
   addrIndex = r.index();
+  persistAddrIndex();
   const a = r.address();
   const addr = confidential ? a : a.toUnconfidential();
   return { address: addr.toString(), index: addrIndex, confidential };
