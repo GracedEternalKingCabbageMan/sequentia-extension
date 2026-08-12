@@ -87,6 +87,16 @@ async function requireUnlockedAndConnected(origin) {
   if (!(await perms.isConnected(origin))) throw new Error('this site is not connected; call connect first');
 }
 
+// For approval-gated methods: only the connection is checked up front. A
+// locked wallet is handled by the approval window itself (it shows its unlock
+// card first), so the request never dies with a bare 'locked' error.
+async function requireConnected(origin) {
+  if (!(await perms.isConnected(origin))) throw new Error('this site is not connected; call connect first');
+}
+async function ensureOpenOrThrow() {
+  if (!(await engine.ensureOpen())) throw new Error('the wallet is locked');
+}
+
 // ---- the method table ----
 export async function handleDappRequest(origin, method, params = {}) {
   if (!origin || !/^https?:\/\//.test(origin)) throw new Error('bad origin');
@@ -150,17 +160,17 @@ export async function handleDappRequest(origin, method, params = {}) {
     }
 
     case 'signMessage': {
-      await requireUnlockedAndConnected(origin);
+      await requireConnected(origin);
       const message = String(params.message ?? '');
       if (!message) throw new Error('message is required');
       return requestApproval(origin, 'signMessage', {
         text: origin + ' asks you to sign a message.',
         message,
-      }, async () => ({ signature: engine.signMessage(message) }));
+      }, async () => { await ensureOpenOrThrow(); return { signature: engine.signMessage(message) }; });
     }
 
     case 'signPset': {
-      await requireUnlockedAndConnected(origin);
+      await requireConnected(origin);
       const psetB64 = String(params.pset ?? '');
       if (!psetB64) throw new Error('pset is required');
       const effect = engine.describePset(psetB64);
@@ -173,7 +183,7 @@ export async function handleDappRequest(origin, method, params = {}) {
       } else {
         display.warning = 'The wallet could not fully decode this PSET; only sign it if you trust this site.';
       }
-      return requestApproval(origin, 'signPset', display, async () => ({ pset: await engine.signPset(psetB64) }));
+      return requestApproval(origin, 'signPset', display, async () => { await ensureOpenOrThrow(); return { pset: await engine.signPset(psetB64) }; });
     }
 
     case 'broadcast': {
@@ -184,7 +194,7 @@ export async function handleDappRequest(origin, method, params = {}) {
     }
 
     case 'createInvoice': {
-      await requireUnlockedAndConnected(origin);
+      await requireConnected(origin);
       const kind = params.asset && params.asset !== 'BTC' ? String(params.asset) : 'BTC';
       const atoms = String(params.amount ?? '');
       if (!/^\d+$/.test(atoms) || BigInt(atoms) <= 0n) throw new Error('amount (atoms) is required');
@@ -192,11 +202,11 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'createInvoice', {
         text: origin + ' asks your wallet to create a Lightning invoice.',
         detail: 'Receive ' + engine.fmt(atoms, kind === 'BTC' ? 'BTC' : kind) + ' ' + ticker + ' over Lightning.',
-      }, async () => await ln.createInvoice({ kind, atoms, memo: params.memo ? String(params.memo).slice(0, 90) : undefined }));
+      }, async () => { await ensureOpenOrThrow(); return await ln.createInvoice({ kind, atoms, memo: params.memo ? String(params.memo).slice(0, 90) : undefined }); });
     }
 
     case 'payInvoice': {
-      await requireUnlockedAndConnected(origin);
+      await requireConnected(origin);
       const bolt11 = String(params.bolt11 ?? '');
       if (!bolt11) throw new Error('bolt11 is required');
       const kind = params.asset && params.asset !== 'BTC' ? String(params.asset) : 'BTC';
@@ -204,7 +214,7 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'payInvoice', {
         text: origin + ' asks you to pay a Lightning invoice from your ' + ticker + ' balance.',
         bolt11: bolt11.slice(0, 90) + (bolt11.length > 90 ? '…' : ''),
-      }, async () => await ln.payInvoice({ kind, bolt11 }));
+      }, async () => { await ensureOpenOrThrow(); return await ln.payInvoice({ kind, bolt11 }); });
     }
 
     default:
