@@ -19,6 +19,7 @@ export const EXPLORER_T4_TX = BASE + '/testnet4/tx/';
 // device identities are derived from the user's mnemonic (vendor/seqln-keys.js).
 export const LSP = {
   url: BASE + '/lsp',
+  wsBase: BASE.replace(/^https/, 'wss'),   // per-user provisioned-node wss base (a SW has no usable location.origin)
   token: 'b5b1-d848ec96d29c01d2ff1db6cf',
   wsAsset: 'wss://sequentiatestnet.com/lsp-ws-asset',
   hostPubkeyAsset: '0295374d947dc7e27382a83b2034a10b3d51b6f2fdf7e7da490893e3995141523b',

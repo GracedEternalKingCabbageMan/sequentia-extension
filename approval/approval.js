@@ -81,13 +81,20 @@ $('btnUnlock').onclick = async () => {
 };
 $('pw').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnUnlock').click(); });
 
+function closeSelf() {
+  // window.close() is unreliable for a page opened via chrome.tabs.create;
+  // fall back to removing our own tab.
+  try { window.close(); } catch {}
+  try { chrome.tabs.getCurrent((t) => { if (t && t.id != null) chrome.tabs.remove(t.id); }); } catch {}
+}
+
 async function decide(approve) {
   $('btnApprove').disabled = $('btnReject').disabled = true;
   $('reqStatus').className = 'status';
   $('reqStatus').textContent = approve ? 'Working…' : 'Rejecting…';
   try {
     await rpc('approval.decide', { id: approval.id, approve });
-    window.close();
+    closeSelf();
   } catch (e) {
     $('reqStatus').className = 'status err';
     $('reqStatus').textContent = 'Failed: ' + e.message;

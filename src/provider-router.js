@@ -28,10 +28,14 @@ export function anyPendingApproval() {
   return first.done ? null : pendingApproval(first.value);
 }
 
+// Approvals open as a regular TAB, not a floating popup window: on tiling /
+// Wayland window managers (seen live on COSMIC) a popup created by a freshly
+// reloaded service worker can land invisible, and an approval the user cannot
+// see times out. A tab is always reachable from the tab strip.
 async function openApprovalWindow(id) {
-  await chrome.windows.create({
+  await chrome.tabs.create({
     url: chrome.runtime.getURL('approval/approval.html') + '?id=' + encodeURIComponent(id),
-    type: 'popup', width: 400, height: 660,
+    active: true,
   });
 }
 
