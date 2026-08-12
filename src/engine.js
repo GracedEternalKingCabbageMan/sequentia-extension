@@ -464,6 +464,31 @@ export async function btcHistory(limit = 60) {
   return out;
 }
 
+// Unspent outputs, serialized for the website provider (the DEX composes
+// swap PSETs from these and sends them back through signPset).
+export function utxosSerialized() {
+  if (!wollet) throw new Error('wallet is locked');
+  const out = [];
+  let utxos = [];
+  try { utxos = wollet.utxos(); } catch { return out; }
+  for (const u of utxos) {
+    try {
+      const op = u.outpoint();
+      const sec = u.unblinded();
+      out.push({
+        txid: op.txid().toString(),
+        vout: op.vout(),
+        asset: sec.asset().toString(),
+        value: String(sec.value()),
+        scriptPubkey: u.scriptPubkey().toString(),
+        address: (() => { try { return u.address().toString(); } catch { return null; } })(),
+        height: u.height() ?? null,
+      });
+    } catch {}
+  }
+  return out;
+}
+
 // ---- signing surfaces for the website provider ----
 // Sign a PSET (site-supplied, e.g. a future DEX order/swap) and return it
 // WITHOUT finalizing or broadcasting — the site composes the rest.
