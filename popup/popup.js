@@ -127,10 +127,12 @@ function renderOverview() {
   for (const r of OV.rows) {
     const row = el('div', 'asset-row');
     const head = el('div', 'arow-head');
-    head.appendChild(el('span', 'tk', r.ticker));
+    const tk = el('span', 'tk', r.ticker); tk.title = r.ticker; head.appendChild(tk);
     if (r.verified) { const b = el('span', 'badge-v', '✓'); b.title = r.key === 'BTC' ? 'Bitcoin, the parent chain' : (r.domain ? 'Verified · ' + r.domain : 'Verified in the Sequentia asset registry'); head.appendChild(b); }
     else if (!r.registered) { const b = el('span', 'badge-u', '⚠'); b.title = 'Not in the asset registry. Anyone can issue an asset with any ticker; verify the issuer before trusting it.'; head.appendChild(b); }
-    const mid = el('div', 'grow'); mid.appendChild(el('div', 'sub', r.name)); head.appendChild(mid);
+    const mid = el('div', 'grow');
+    const nm = el('div', 'sub', r.name); nm.title = r.name + (r.domain ? ' · registered by ' + r.domain : '');
+    mid.appendChild(nm); head.appendChild(mid);
     const amt = el('span', 'amt');
     amt.appendChild(el('div', null, fmtAtoms(r.total, r.precision)));
     if (r.refStr) amt.appendChild(el('div', 'sub', r.refStr));
