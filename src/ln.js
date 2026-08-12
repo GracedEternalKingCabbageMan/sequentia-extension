@@ -38,6 +38,7 @@ export function lnInit() {
     lspUrl: LSP.url,
     token: LSP.token,
     sdk: signerSdk,
+    wsBase: LSP.wsBase,
     nodes: {
       asset: { wsUrl: LSP.wsAsset, hostPubkey: LSP.hostPubkeyAsset },
       btc: { wsUrl: LSP.wsBtc, hostPubkey: LSP.hostPubkeyBtc },
