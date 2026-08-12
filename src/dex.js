@@ -84,6 +84,7 @@ function pickFee(payAsset, recvAsset) {
 // amounts, and return { display, exec } for the approval flow.
 export async function prepareOnchainFill({ mount = 'chain', base, quote, offerId, takeBase, confidential = false }) {
   if (!(await engine.ensureOpen())) throw new Error('the wallet is locked');
+  await engine.syncIfStale();   // the balance check below must see the live UTXO set
   const o = await fetchOffer(mount, base, quote, offerId);
   if (o.cross_chain) throw new Error('cross-chain offers are not fillable from the site yet');
   if (o.covenant) throw new Error('covenant offers are not fillable from the site yet');
