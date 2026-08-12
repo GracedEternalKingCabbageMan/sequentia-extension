@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Sequentia Wallet",
+  "version": "0.1.0",
+  "description": "Non-custodial dual-chain wallet for the Sequentia network and Bitcoin testnet4: balances, send and receive, Lightning, OpenAMP restricted assets, and website connections.",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Sequentia Wallet"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/inpage.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "permissions": ["storage", "alarms"],
+  "host_permissions": ["https://sequentiatestnet.com/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  }
+}

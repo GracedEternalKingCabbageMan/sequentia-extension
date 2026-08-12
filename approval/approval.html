@@ -1,0 +1,44 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sequentia Wallet — approval</title>
+<link rel="stylesheet" href="../popup/ui.css">
+<style>
+  body { width: auto; min-width: 360px; }
+  .origin { font-family: var(--mono); color: var(--gold); word-break: break-all; }
+  .payload { background: var(--bg2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-family: var(--mono); font-size: 11px; word-break: break-all; max-height: 140px; overflow: auto; margin-top: 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand"><span class="dot"></span> Sequentia Wallet</div>
+
+  <div id="unlockCard" class="card hide">
+    <h2>Unlock to continue</h2>
+    <p class="sub">This request needs your wallet unlocked.</p>
+    <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+    <button id="btnUnlock" class="primary">Unlock</button>
+    <div id="unlockErr" class="status err"></div>
+  </div>
+
+  <div id="reqCard" class="card hide">
+    <h2 id="reqTitle">Request</h2>
+    <p class="sub"><span class="origin" id="reqOrigin"></span></p>
+    <p id="reqText" class="sub"></p>
+    <div id="reqDetail"></div>
+    <div class="row" style="margin-top:16px">
+      <button id="btnApprove" class="primary">Approve</button>
+      <button id="btnReject" class="ghost">Reject</button>
+    </div>
+    <div id="reqStatus" class="status"></div>
+  </div>
+
+  <div id="noneCard" class="card hide">
+    <h2>Nothing pending</h2>
+    <p class="sub">This request has expired or was already handled. You can close this window.</p>
+  </div>
+</div>
+<script type="module" src="approval.js"></script>
+</body>
+</html>
