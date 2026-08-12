@@ -157,7 +157,12 @@ export async function createInvoice({ kind, atoms, memo }) {
   lnInit();
   const meta = kind === 'BTC' ? { ticker: 'BTC' } : A.assetMeta(kind);
   say('Bringing your ' + meta.ticker + ' Lightning node online…');
-  await connectOwnNode(kind);
+  const prov = await connectOwnNode(kind);
+  // A freshly provisioned node blocks at hsmd init until the device signer
+  // attaches, and its RPC socket appears only seconds later — calling
+  // lightning-cli before that fails with "lightning-rpc: No such file".
+  say('Preparing your Lightning node (booting and syncing)…');
+  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node (booting and syncing)…') });
   const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
   say('Ensuring inbound liquidity…');
   try { await seqlnChannelInbound({ node_key, asset: kind === 'BTC' ? undefined : kind, amount: Number(atoms) }); } catch {}
@@ -171,7 +176,9 @@ export async function payInvoice({ kind, bolt11 }) {
   lnInit();
   const meta = kind === 'BTC' ? { ticker: 'BTC' } : A.assetMeta(kind);
   say('Bringing your ' + meta.ticker + ' Lightning node online…');
-  await connectOwnNode(kind);
+  const prov = await connectOwnNode(kind);
+  say('Preparing your Lightning node…');
+  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node…') });
   const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
   say('Paying over Lightning…');
   const r = await seqlnNodePay({ node_key, bolt11 });

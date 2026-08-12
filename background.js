@@ -80,16 +80,30 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === 'autolock') doLock().catch(() => {});
 });
 
-// Rebuild engine state silently if the worker restarted while unlocked.
+// Rebuild engine state silently if the worker restarted while unlocked — but
+// do NOT rerun the heavy warm-up (full scan + cache-base scan): the worker
+// cold-starts constantly, and a scan's synchronous wasm stretches starve the
+// event loop enough to stall a concurrent Noise handshake past the hosted
+// node's act-three deadline (seen live: the LN device signer could never
+// attach right after a cold start). Requests pull their own freshness via
+// syncIfStale; only a pending Lightning move (fund safety) resumes eagerly.
 (async () => {
   if (await sessionMnemonic()) {
-    engine.ensureOpen().then(() => afterUnlock()).catch(() => {});
+    await engine.ensureOpen().catch(() => {});
+    if (await ln.pendingMove()) ln.resumePendingMove().catch(() => {});
   }
 })();
 
 // ---- overview composition for the popup ----
 async function overview({ withLn = false } = {}) {
   await engine.ensureOpen();
+  // Keep display data fresh without the unlock-time warm-up: refresh prices,
+  // fee rates, and the registry in the background when they have gone stale.
+  if (A.pricesStale()) {
+    A.loadPrices().catch(() => {});
+    A.fetchFeeRates().catch(() => {});
+    A.loadRegistry().catch(() => {});
+  }
   const settings = (await stGet('local', 'ext.settings')) || {};
   const ref = settings.refCcy || 'USD';
   const bal = await engine.balances();
