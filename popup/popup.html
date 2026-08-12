@@ -1,0 +1,191 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sequentia Wallet</title>
+<link rel="stylesheet" href="ui.css">
+</head>
+<body>
+<div class="wrap">
+
+  <!-- boot -->
+  <div id="vBoot"><div class="card"><p class="sub">Loading…</p></div></div>
+
+  <!-- onboarding -->
+  <div id="vWelcome" class="hide">
+    <div class="brand"><span class="dot"></span> Sequentia Wallet</div>
+    <div class="card">
+      <h2>Welcome</h2>
+      <p class="sub">A non-custodial wallet for the Sequentia network and Bitcoin testnet4. One seed, both chains, one shared address.</p>
+      <button id="btnStartCreate" class="primary">Create a new wallet</button>
+      <button id="btnStartImport" class="ghost">Import an existing phrase</button>
+    </div>
+  </div>
+
+  <div id="vCreate" class="hide">
+    <div class="brand"><span class="dot"></span> New wallet</div>
+    <div class="card">
+      <h2>Your recovery phrase</h2>
+      <p class="sub">Write these 12 words down, in order, somewhere safe. Anyone with them controls your funds on both chains.</p>
+      <div id="newPhrase" class="phrase"></div>
+      <label class="sub" style="display:block;margin-top:12px">Choose a password (unlocks this extension)</label>
+      <input id="createPw" type="password" placeholder="Password (min 8 characters)">
+      <input id="createPw2" type="password" placeholder="Repeat password">
+      <button id="btnCreateGo" class="primary">I saved the phrase — create wallet</button>
+      <button id="btnCreateBack" class="ghost">Back</button>
+      <div id="createErr" class="status err"></div>
+    </div>
+  </div>
+
+  <div id="vImport" class="hide">
+    <div class="brand"><span class="dot"></span> Import wallet</div>
+    <div class="card">
+      <h2>Recovery phrase</h2>
+      <textarea id="importPhrase" rows="3" placeholder="12 or 24 words separated by spaces"></textarea>
+      <input id="importPw" type="password" placeholder="Password (min 8 characters)">
+      <input id="importPw2" type="password" placeholder="Repeat password">
+      <button id="btnImportGo" class="primary">Import</button>
+      <button id="btnImportBack" class="ghost">Back</button>
+      <div id="importErr" class="status err"></div>
+    </div>
+  </div>
+
+  <!-- unlock -->
+  <div id="vUnlock" class="hide">
+    <div class="brand"><span class="dot"></span> Sequentia Wallet</div>
+    <div class="card">
+      <h2>Unlock</h2>
+      <input id="unlockPw" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="btnUnlock" class="primary">Unlock</button>
+      <div id="unlockErr" class="status err"></div>
+    </div>
+  </div>
+
+  <!-- main app -->
+  <div id="vApp" class="hide">
+    <div class="hdr">
+      <div class="brand" style="margin:0"><span class="dot"></span></div>
+      <span class="net">Sequentia testnet · Bitcoin testnet4</span>
+      <span class="grow"></span>
+      <select id="refSel" title="Reference currency"></select>
+      <button id="btnLock" class="ghost tiny" title="Lock">🔒</button>
+    </div>
+
+    <div class="tabs">
+      <button data-tab="balance" class="on">Balance</button>
+      <button data-tab="send">Send</button>
+      <button data-tab="receive">Receive</button>
+      <button data-tab="history">History</button>
+      <button data-tab="settings">Settings</button>
+    </div>
+
+    <!-- balance -->
+    <div id="tBalance">
+      <div class="headline" id="headline">—</div>
+      <p class="sub" id="headlineSub">Portfolio total</p>
+      <div id="syncNote" class="status"></div>
+      <div id="assetList" style="margin-top:10px"></div>
+    </div>
+
+    <!-- send -->
+    <div id="tSend" class="hide">
+      <div class="card">
+        <h2>Send</h2>
+        <p class="sub">Paste an address (on-chain) or a Lightning invoice. Restricted assets go to a recipient AID.</p>
+        <input id="sendTo" placeholder="tb1… / tsqb1… address, AID, or lightning invoice" class="mono">
+        <div id="sendOnchain">
+          <select id="sendAsset"></select>
+          <div class="sub" id="sendAvail" style="margin-top:4px"></div>
+          <input id="sendAmt" placeholder="Amount" inputmode="decimal">
+          <div id="sendFeeRow">
+            <label class="sub" style="display:block;margin-top:8px">Fee paid in</label>
+            <select id="feeAsset"></select>
+            <input id="feeRate" placeholder="Fee rate (optional; fee-asset units per vByte)" inputmode="decimal">
+          </div>
+          <button id="btnReview" class="primary">Review</button>
+        </div>
+        <div id="sendLn" class="hide">
+          <label class="sub" style="display:block;margin-top:8px">Pay from</label>
+          <select id="lnPayAsset"></select>
+          <button id="btnLnPay" class="primary">Pay invoice</button>
+        </div>
+        <div id="sendErr" class="status"></div>
+      </div>
+    </div>
+
+    <!-- receive -->
+    <div id="tReceive" class="hide">
+      <div class="card">
+        <div class="row">
+          <h2 class="grow">Receive</h2>
+          <button id="btnRecvMode" class="ghost tiny">Lightning</button>
+        </div>
+        <div id="recvOnchain">
+          <p class="sub">One address for both chains: it receives Sequentia assets and parent-chain BTC.</p>
+          <img id="recvQr" class="qr" alt="">
+          <div id="recvAddr" class="addr"></div>
+          <div class="row">
+            <button id="btnCopyAddr" class="ghost tiny">Copy</button>
+            <button id="btnNewAddr" class="ghost tiny">New address</button>
+            <button id="btnConfToggle" class="ghost tiny">Confidential</button>
+          </div>
+          <p class="sub" id="recvTip" style="margin-top:8px"></p>
+        </div>
+        <div id="recvLn" class="hide">
+          <p class="sub">Create a Lightning invoice. BTC and fee-priced Sequentia assets can travel over Lightning.</p>
+          <select id="lnRecvAsset"></select>
+          <input id="lnRecvAmt" placeholder="Amount" inputmode="decimal">
+          <button id="btnLnInvoice" class="primary">Create invoice</button>
+          <div id="lnInvoiceOut" class="addr hide"></div>
+          <button id="btnCopyInvoice" class="ghost tiny hide">Copy invoice</button>
+        </div>
+        <div id="recvStatus" class="status"></div>
+      </div>
+      <div id="recvOamp" class="card hide">
+        <h2>Restricted assets (OpenAMP)</h2>
+        <p class="sub">Your account ID (AID): <span id="oampAid" class="mono"></span></p>
+        <select id="oampRecvAsset"></select>
+        <div id="oampRecvAddr" class="addr hide"></div>
+        <img id="oampRecvQr" class="qr hide" alt="">
+      </div>
+    </div>
+
+    <!-- history -->
+    <div id="tHistory" class="hide">
+      <div class="tabs">
+        <button data-htab="seq" class="on">Sequentia</button>
+        <button data-htab="btc">Bitcoin</button>
+        <button data-htab="oamp">Restricted</button>
+      </div>
+      <div id="histList"></div>
+    </div>
+
+    <!-- settings -->
+    <div id="tSettings" class="hide">
+      <div class="card">
+        <h2>Connected sites</h2>
+        <div id="siteList"><p class="sub">No sites connected.</p></div>
+      </div>
+      <div class="card">
+        <h2>Preferences</h2>
+        <label class="sub">Auto-lock after (minutes)</label>
+        <input id="setAutolock" inputmode="numeric">
+        <button id="btnSaveSettings" class="ghost tiny" style="margin-top:8px">Save</button>
+      </div>
+      <div class="card">
+        <h2>Recovery phrase</h2>
+        <p class="sub">Requires your password. Never share it; anyone with it controls your funds.</p>
+        <input id="revealPw" type="password" placeholder="Password">
+        <button id="btnReveal" class="ghost tiny" style="margin-top:8px">Reveal</button>
+        <div id="revealOut" class="addr hide"></div>
+      </div>
+      <div class="card">
+        <p class="sub">Sequentia Wallet v0.1.0 · <a class="link" href="https://sequentiatestnet.com" target="_blank" rel="noopener">sequentiatestnet.com</a></p>
+      </div>
+      <div id="settingsStatus" class="status"></div>
+    </div>
+  </div>
+</div>
+<script type="module" src="popup.js"></script>
+</body>
+</html>

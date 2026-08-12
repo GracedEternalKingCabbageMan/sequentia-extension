@@ -1,0 +1,17 @@
+{
+  "name": "lwk_wasm",
+  "type": "module",
+  "description": "Liquid Wallet Kit - WASM",
+  "version": "0.18.0",
+  "license": "MIT OR BSD-2-Clause",
+  "files": [
+    "lwk_wasm_bg.wasm",
+    "lwk_wasm.js",
+    "lwk_wasm.d.ts"
+  ],
+  "main": "lwk_wasm.js",
+  "types": "lwk_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
