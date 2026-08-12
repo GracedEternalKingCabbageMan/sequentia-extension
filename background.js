@@ -14,6 +14,7 @@ import * as engine from './src/engine.js';
 import * as A from './src/assets.js';
 import * as openamp from './src/openamp.js';
 import * as ln from './src/ln.js';
+import * as dex from './src/dex.js';
 import * as perms from './src/permissions.js';
 import * as router from './src/provider-router.js';
 import {
@@ -50,9 +51,13 @@ function emitToAll(event, data) {
   for (const origin of dappPorts.keys()) emitToOrigin(origin, event, data);
 }
 
-// ---- LN progress relayed to whichever UI page is listening ----
+// ---- LN + DEX progress relayed to whichever UI page is listening ----
 ln.setProgressSink((text) => {
   chrome.runtime.sendMessage({ scope: 'ui-event', event: 'ln-progress', text }).catch(() => {});
+});
+dex.setProgressSink((text) => {
+  chrome.runtime.sendMessage({ scope: 'ui-event', event: 'ln-progress', text }).catch(() => {});
+  emitToAll('dexProgress', { text });
 });
 
 // ---- unlock lifecycle ----

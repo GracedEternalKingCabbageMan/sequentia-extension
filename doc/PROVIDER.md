@@ -128,6 +128,29 @@ wallet can RECEIVE up to `amount` atoms of `asset` (default BTC) over
 Lightning. May provision or extend a channel to the user's hosted node.
 Phase one of the channel marketplace.
 
+## DEX taker methods
+
+For both methods the wallet NEVER trusts the site's numbers: the site names
+an offer (pair + `offerId` + take size) and the wallet re-fetches that offer
+from the order-book relay itself, recomputes the exact amounts with the
+daemon's proRata / slice math, and shows those in the approval window.
+
+### `dexFillOnchain({ base, quote, offerId, takeBase, mount? })` — approval per request
+Fills a resting same-chain order (maker co-signs over the relay courier; the
+wallet signs and broadcasts the atomic swap transaction). `takeBase` is the
+take size in base-asset atoms (partial fills settle at the offer's exact
+ratio). `mount: 'conf'` fills on the confidential book instead: the wallet
+receives to a blinded address and the trade settles as a blinded
+transaction. Returns `{ txid, paid: {asset, atoms}, received: {asset, atoms} }`.
+
+### `dexSwapLn({ base, quote, offerId, takeAtoms? })` — approval per request
+LNDEX taker swap: both legs travel over the user's OWN hosted Lightning
+nodes (device-co-signed; the LSP routes but cannot move funds). `quote` is
+`'BTC'` for a cross-chain market or an asset id for asset-to-asset. Omitting
+`takeAtoms` lifts the whole offer. Returns
+`{ settled, direction, baseAtoms, quoteAtoms, preimage, paymentHash }`.
+Instant and final on settlement; on a stall nothing moves.
+
 ## Events
 
 Subscribe with `window.sequentia.on(event, handler)`:

@@ -284,6 +284,20 @@ export function qrFor(payload) {
   return stringToQr(payload);
 }
 
+// The raw wasm Address object at the current receive index (for callers that
+// need the object, e.g. the DEX swap builder). Confidential opt-in.
+export function rawAddress(confidential = false) {
+  if (!wollet) throw new Error('wallet is locked');
+  const r = wollet.address(addrIndex == null ? undefined : addrIndex);
+  addrIndex = r.index();
+  persistAddrIndex();
+  const a = r.address();
+  return confidential ? a : a.toUnconfidential();
+}
+
+// Track a self-broadcast tx from another module (the DEX fill path).
+export function noteOwn(finalized) { noteOwnTx(finalized); }
+
 // ---- fee application (any-asset fees, open fee market) ----
 function applyFee(b, feeHex) {
   if (feeHex && feeHex !== POLICY_HEX) return b.feeRate(DEFAULT_FEERATE).feeAsset(new AssetId(feeHex), A.feeRateFor(feeHex));
