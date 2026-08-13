@@ -37,6 +37,7 @@ chrome.runtime.onConnect.addListener((port) => {
     // Chrome's ~5-minute cap, which killed multi-minute swaps mid-flight.
     // Port messages have no such cap; the content script prefers this path.
     port.onMessage.addListener((m) => {
+      if (m && m.__ping) { try { port.postMessage({ __pong: 1 }); } catch {} return; }
       if (!m || m.__req == null) return;
       (async () => {
         try {
