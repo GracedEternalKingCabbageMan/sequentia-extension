@@ -14,12 +14,15 @@
 // proRata / slice math, and shows THOSE in the approval window.
 
 import { AssetId, Pset } from '../pkg/lwk_wasm.js';
+import * as wasmMod from '../pkg/lwk_wasm.js';
 import * as seqob from '../vendor/seqob.js';
 import { seqlnSwap, seqlnChannelInbound, waitNodeReady } from '../vendor/seqln.js';
+import { settleFill as covSettleFill, planFillFromMatched } from '../vendor/covenant-order.js';
+import { makeCovenantHooks, revHexStr } from '../vendor/covenant-fill-host.js';
 import * as A from './assets.js';
 import * as engine from './engine.js';
 import * as ln from './ln.js';
-import { BASE, DEFAULT_FEERATE, EXCHANGE_RATE_SCALE } from './config.js';
+import { BASE, ESPLORA, DEFAULT_FEERATE, EXCHANGE_RATE_SCALE } from './config.js';
 import { fmtAtoms } from './util.js';
 
 const MOUNTS = {
@@ -87,7 +90,10 @@ export async function prepareOnchainFill({ mount = 'chain', base, quote, offerId
   await engine.syncIfStale();   // the balance check below must see the live UTXO set
   const o = await fetchOffer(mount, base, quote, offerId);
   if (o.cross_chain) throw new Error('cross-chain offers are not fillable from the site yet');
-  if (o.covenant) throw new Error('covenant offers are not fillable from the site yet');
+  if (o.covenant || o.Covenant) {
+    if (confidential) throw new Error('covenant orders are transparent by design; this one cannot be on the confidential book');
+    return prepareCovenantFill(o, takeBase);
+  }
   if (!o.same_chain || !o.same_chain.maker_recv_address) throw new Error('this offer has no same-chain settlement terms');
   if (confidential && !o.confidential) throw new Error('this is not a confidential-book offer');
   const q = sameChainQuote(o, takeBase);
@@ -148,6 +154,87 @@ export async function prepareOnchainFill({ mount = 'chain', base, quote, offerId
     };
   };
 
+  return { display, exec };
+}
+
+// ---- covenant fill ----------------------------------------------------------
+// A funded, self-enforcing resting order: the maker locked asset A in one
+// taproot UTXO and can be offline; ANYONE who pays the baked-in price may
+// spend it, enforced by the tapscript interpreter. No maker round-trip: the
+// taker assembles the FILL (covenant input 0, no signature; own explicit
+// funding inputs for the credit + fee), verified byte-for-byte against the
+// on-chain scriptPubKey by covenant-order.js before anything is signed.
+async function prepareCovenantFill(o, takeBase) {
+  const q = sameChainQuote(o, takeBase);   // recvAsset = the covenant's asset A
+  // Fee must not be the covenant's sold asset A; prefer the credit asset B.
+  const fee = (() => {
+    for (const a of [q.payAsset, A.policyHex()]) {
+      if (a === q.recvAsset) continue;
+      try {
+        const rate = A.feeRateFor(a);
+        const nativeFeeSats = (BigInt(DEFAULT_FEERATE) * EST_SWAP_VSIZE) / 1000n;
+        return { asset: a, atoms: ceilDiv(nativeFeeSats * BigInt(EXCHANGE_RATE_SCALE), rate) };
+      } catch {}
+    }
+    throw new Error('no fee-priced asset available for the fill fee');
+  })();
+
+  const synth = {
+    resting_is_covenant: true,
+    covenant: o.covenant || o.Covenant,
+    covenant_locked: String(BigInt(o.offer_amount)),
+    fill_base_amount: q.recvAtoms.toString(),
+    offer_id: o.offer_id,
+    pair: o.pair,
+  };
+
+  // Covenant fills are all-explicit transactions: receive and change go to the
+  // TRANSPARENT address (a blinded output could never balance the introspected
+  // explicit amounts).
+  const transparentAddr = engine.rawAddress(false).toString();
+  const ctx = {
+    wasm: wasmMod,
+    wollet: engine.getWollet(),
+    network: engine.getNetwork(),
+    mnemonic: engine.getMnemonic(),
+    esploraFetch: (path, init) => fetch(ESPLORA + path, init),
+    receiveAddress: () => transparentAddr,
+    fee: { asset: fee.asset, atoms: fee.atoms.toString() },
+    noteOwnTx: engine.noteOwn,
+    onStatus: say,
+    opts: {},
+  };
+  const hooks = makeCovenantHooks(ctx);
+
+  // Verify against the funded UTXO and derive the consensus-exact amounts for
+  // the approval sheet (the recipe, not our display math, is what settles).
+  const ct = synth.covenant;
+  const spkHex = await hooks.fetchUtxoSpk(ct.covenant_txid || ct.covenantTxid, ct.covenant_vout ?? ct.covenantVout ?? 0);
+  const recipe = planFillFromMatched(synth, spkHex, {});
+  const payAsset = revHexStr(recipe.creditAsset);
+  const recvAsset = revHexStr(recipe.covenantAsset);
+  const pm = A.assetMeta(payAsset), rm = A.assetMeta(recvAsset), fm = A.assetMeta(fee.asset);
+
+  const display = {
+    text: 'Fill a funded covenant order on the SeqDEX on-chain book. The order is enforced by the chain itself; the maker can be offline.',
+    deltas: [
+      { ticker: pm.ticker, atoms: '-' + String(recipe.creditValue), precision: pm.precision || 0 },
+      { ticker: rm.ticker, atoms: q.recvAtoms.toString(), precision: rm.precision || 0 },
+    ],
+    detail: (recipe.partial ? 'Partial fill; the remainder re-locks in a fresh covenant for the next taker. ' : 'Fills the whole order. ')
+      + 'Network fee ≈ ' + fmtAtoms(fee.atoms, fm.precision || 0) + ' ' + fm.ticker
+      + ' · consensus-exact: the chain rejects any underpay or redirect.',
+  };
+
+  const exec = async () => {
+    const res = await engine.withWollet(() => covSettleFill(synth, hooks));
+    engine.sync().catch(() => {});
+    return {
+      txid: res.txid || null,
+      paid: { asset: payAsset, atoms: String(recipe.creditValue) },
+      received: { asset: recvAsset, atoms: q.recvAtoms.toString() },
+    };
+  };
   return { display, exec };
 }
 
