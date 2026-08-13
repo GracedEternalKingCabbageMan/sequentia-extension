@@ -223,6 +223,35 @@ async function prepareCovenantFill(o, takeBase) {
   const recvAsset = revHexStr(recipe.covenantAsset);
   const pm = A.assetMeta(payAsset), rm = A.assetMeta(recvAsset), fm = A.assetMeta(fee.asset);
 
+  // A covenant fill spends EXPLICIT coins only (the leaf introspects explicit
+  // amounts). If the credit+fee need is short on explicit coins but covered by
+  // blinded ones, plan an automatic explicitizing self-transfer first — chained
+  // in the mempool ahead of the fill — instead of telling the user to do it.
+  const needByAsset = new Map();
+  needByAsset.set(payAsset, BigInt(recipe.creditValue));
+  needByAsset.set(fee.asset, (needByAsset.get(fee.asset) || 0n) + fee.atoms);
+  const explicitize = [];
+  {
+    const utxos = engine.getWollet().utxos();
+    for (const [asset, target] of needByAsset) {
+      let explicit = 0n, blinded = 0n;
+      for (const u of utxos) {
+        try {
+          const sec = u.unblinded();
+          if (sec.asset().toString() !== asset) continue;
+          const isExp = sec.isExplicit ? sec.isExplicit() : true;
+          if (isExp) explicit += BigInt(sec.value()); else blinded += BigInt(sec.value());
+        } catch {}
+      }
+      if (explicit < target) {
+        if (explicit + blinded < target + (asset === fee.asset ? fee.atoms : 0n)) {
+          throw new Error('not enough ' + A.assetMeta(asset).ticker + ' to fill this order');
+        }
+        explicitize.push({ asset, amount: target });
+      }
+    }
+  }
+
   const display = {
     text: 'Fill a funded covenant order on the SeqDEX on-chain book. The order is enforced by the chain itself; the maker can be offline.',
     deltas: [
@@ -232,10 +261,15 @@ async function prepareCovenantFill(o, takeBase) {
     detail: (recipe.partial ? 'Partial fill; the remainder re-locks in a fresh covenant for the next taker. ' : 'Fills the whole order. ')
       + 'Network fee ≈ ' + fmtAtoms(fee.atoms, fm.precision || 0) + ' ' + fm.ticker
       + ' · consensus-exact: the chain rejects any underpay or redirect.'
-      + ' The maker can cancel this order until your fill confirms; a cancel voids the fill and nothing of yours moves.',
+      + ' The maker can cancel this order until your fill confirms; a cancel voids the fill and nothing of yours moves.'
+      + (explicitize.length ? ' Includes an automatic self-transfer first: part of your balance is in blinded outputs, and a covenant fill spends explicit coins only.' : ''),
   };
 
   const exec = async () => {
+    for (const e of explicitize) {
+      say('Making your blinded ' + A.assetMeta(e.asset).ticker + ' spendable for the fill…');
+      await engine.sendToAddress({ chain: 'seq', asset: e.asset, amount: e.amount.toString(), address: transparentAddr });
+    }
     const res = await engine.withWollet(() => covSettleFill(synth, hooks));
     engine.sync().catch(() => {});
     return {
