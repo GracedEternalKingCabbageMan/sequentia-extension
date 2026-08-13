@@ -214,6 +214,12 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'dexSwapLn', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
     }
 
+    case 'dexJobResult': {
+      // Silent poll for a dispatched Lightning-swap job's outcome.
+      await requireConnected(origin);
+      return await dex.jobResult(String(params.jobId || ''));
+    }
+
     case 'lnRequestInbound': {
       await requireConnected(origin);
       const kind = params.asset && params.asset !== 'BTC' ? String(params.asset) : 'BTC';

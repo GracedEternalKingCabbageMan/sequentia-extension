@@ -16,7 +16,7 @@
 import { AssetId, Pset } from '../pkg/lwk_wasm.js';
 import * as wasmMod from '../pkg/lwk_wasm.js';
 import * as seqob from '../vendor/seqob.js';
-import { seqlnSwap, seqlnChannelInbound, waitNodeReady } from '../vendor/seqln.js';
+import { sessionMnemonic } from './vault.js';
 import { settleFill as covSettleFill, planFillFromMatched } from '../vendor/covenant-order.js';
 import { makeCovenantHooks, revHexStr } from '../vendor/covenant-fill-host.js';
 import * as A from './assets.js';
@@ -330,44 +330,54 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
       + 'Both legs travel through your own Lightning channels; if it stalls, nothing moves and your funds are returned automatically.',
   };
 
+  // The swap runs in the OFFSCREEN document: a service worker dies to idle
+  // clocks and task caps mid-swap (seen live, repeatedly); the offscreen page
+  // has neither. The approved exec dispatches a job and returns its id; the
+  // site polls dexJobResult, so even a worker death cannot lose the outcome.
   const exec = async () => {
-    ln.lnInit();
+    const phrase = await sessionMnemonic();
+    if (!phrase) throw new Error('the wallet is locked');
+    await ensureOffscreen();
+    const job = 'oln' + Date.now() + Math.random().toString(36).slice(2, 8);
     const counterKind = quote === 'BTC' ? 'BTC' : quote;
-    say('Bringing your ' + bm.ticker + ' Lightning node online…');
-    const provBase = await ln.connectOwnNode(base);
-    await ln.waitNodeReadyPatient(provBase.key, bm.ticker);
-    say('Bringing your ' + qm.ticker + ' Lightning node online…');
-    const provCounter = await ln.connectOwnNode(counterKind);
-    await ln.waitNodeReadyPatient(provCounter.key, qm.ticker);
-    // Best-effort JIT inbound on the RECEIVING leg (a funded channel may
-    // already have room; the LSP tops up when it does not).
-    say('Ensuring inbound capacity on your receiving leg…');
-    try {
-      if (side === 'buy') await seqlnChannelInbound({ node_key: provBase.key, asset: base, amount: Number(recvAtoms) });
-      else await seqlnChannelInbound({ node_key: provCounter.key, asset: quote === 'BTC' ? undefined : quote, amount: Number(recvAtoms) });
-    } catch {}
-    say('Settling over Lightning…');
-    const body = {
-      side, asset: base,
-      amount: Number(q.takeAtoms) / Math.pow(10, bm.precision || 0),
-      quote_asset: quote === 'BTC' ? undefined : quote,
-      node_key: provBase.key,
-      counter_node_key: provCounter.key,
-      offer_id: o.offer_id, maker_pubkey: o.maker_pubkey,
-      take_atoms: q.whole ? undefined : Number(q.takeAtoms),
-    };
-    const r = await seqlnSwap(body);
-    return {
-      settled: true,
-      direction: r.direction || (side === 'sell' ? 'sold' : 'bought'),
-      baseAtoms: String(r.base_amount ?? q.takeAtoms),
-      quoteAtoms: String(r.quote_amount ?? q.quoteAtoms),
-      preimage: r.preimage || null,
-      paymentHash: r.hash_h || null,
-    };
+    await chrome.runtime.sendMessage({
+      scope: 'oln', op: 'swap', job,
+      params: {
+        phrase, base, counterKind, side,
+        baseTicker: bm.ticker, counterTicker: qm.ticker,
+        recvAtoms: recvAtoms.toString(),
+        amountUnits: Number(q.takeAtoms) / Math.pow(10, bm.precision || 0),
+        offerId: o.offer_id, makerPubkey: o.maker_pubkey,
+        takeAtomsNum: q.whole ? null : Number(q.takeAtoms),
+        takeAtoms: q.takeAtoms.toString(), quoteAtoms: q.quoteAtoms.toString(),
+      },
+    });
+    return { jobId: job, pending: true };
   };
 
   return { display, exec };
+}
+
+async function ensureOffscreen() {
+  try {
+    const has = await chrome.offscreen.hasDocument();
+    if (has) return;
+  } catch {}
+  try {
+    await chrome.offscreen.createDocument({
+      url: 'offscreen.html',
+      reasons: ['WORKERS'],
+      justification: 'Long-lived Lightning signer sessions outlive service worker limits',
+    });
+  } catch (e) {
+    if (!String(e && e.message).includes('single offscreen')) throw e;
+  }
+}
+
+export async function jobResult(jobId) {
+  const key = 'ext.olnjob.' + String(jobId);
+  const o = await chrome.storage.local.get(key);
+  return o[key] || { done: false };
 }
 
 // ---- PSET bip32-derivation stripping (verbatim from the proven web-wallet

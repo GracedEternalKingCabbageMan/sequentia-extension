@@ -321,6 +321,13 @@ const uiMethods = {
 
 // ---- message dispatch ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Offscreen-document job telemetry: relay progress to the dapp pages.
+  if (msg && (msg.scope === 'oln-progress' || msg.scope === 'oln-done')) {
+    if (msg.scope === 'oln-progress') emitToAll('dexProgress', { text: msg.text, job: msg.job });
+    else emitToAll('dexJobDone', { job: msg.job });
+    sendResponse && sendResponse({ ok: true });
+    return false;
+  }
   (async () => {
     try {
       if (msg && msg.scope === 'ui') {
