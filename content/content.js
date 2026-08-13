@@ -3,11 +3,21 @@
 //
 // Requests prefer the long-lived PORT channel: sendMessage response callbacks
 // die at Chrome's ~5-minute cap, which is shorter than a Lightning swap or a
-// node revival. sendMessage remains the bootstrap fallback.
+// node revival. While any port request is in flight, a keepalive ping runs
+// every 15s — each port message resets the service worker's 30-second idle
+// clock, so a multi-minute operation cannot be killed mid-flight.
 (() => {
   const TAG = '__sequentiaWallet';
   let eventPort = null;
+  let pinger = null;
   const portPending = new Map();   // reqId -> true (response routed to page)
+
+  function updatePinger() {
+    if (portPending.size && !pinger) {
+      pinger = setInterval(() => { try { eventPort && eventPort.postMessage({ __ping: 1 }); } catch {} }, 15000);
+    }
+    if (!portPending.size && pinger) { clearInterval(pinger); pinger = null; }
+  }
 
   function ensureEventPort() {
     if (eventPort) return eventPort;
@@ -15,8 +25,10 @@
       eventPort = chrome.runtime.connect({ name: 'seq-dapp' });
       eventPort.onMessage.addListener((m) => {
         if (!m) return;
+        if (m.__pong) return;
         if (m.__res != null) {
           if (portPending.delete(m.__res)) {
+            updatePinger();
             window.postMessage({ [TAG]: 'res', id: m.__res, ok: !!m.ok, result: m.result, error: m.error }, window.location.origin);
           }
           return;
@@ -25,11 +37,11 @@
       });
       eventPort.onDisconnect.addListener(() => {
         eventPort = null;
-        // The worker restarted: fail outstanding port requests honestly.
         for (const id of portPending.keys()) {
           window.postMessage({ [TAG]: 'res', id, ok: false, error: 'the wallet restarted; check your balances before retrying' }, window.location.origin);
         }
         portPending.clear();
+        updatePinger();
       });
     } catch { eventPort = null; }
     return eventPort;
@@ -60,9 +72,10 @@
     if (port) {
       try {
         portPending.set(m.id, true);
+        updatePinger();
         port.postMessage({ __req: m.id, method: m.method, params: m.params });
         return;
-      } catch { portPending.delete(m.id); eventPort = null; }
+      } catch { portPending.delete(m.id); updatePinger(); eventPort = null; }
     }
     viaSendMessage(m);
   });
