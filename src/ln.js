@@ -71,6 +71,24 @@ export async function btcNodeKey() {
   return 'btc:' + String(pub).toLowerCase();
 }
 
+// Patient node-readiness: a revived node blocks at hsmd until the device
+// signer attaches (which connectOwnNode holds open), then may need minutes of
+// block catch-up before its RPC answers. One short waitNodeReady budget turns
+// that into a user-facing failure; retry inside the SAME held connection.
+export async function waitNodeReadyPatient(nodeKey, label, totalMs = 5 * 60_000) {
+  const deadline = Date.now() + totalMs;
+  for (;;) {
+    try {
+      await waitNodeReady({ nodeKey, onProgress: () => say('Preparing your ' + label + ' node (booting and syncing)…') });
+      return;
+    } catch (e) {
+      if (Date.now() > deadline) throw e;
+      say('Your ' + label + ' node is still syncing; holding on…');
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+}
+
 // Bring the user's OWN hosted node online (idempotent: re-attaches to an
 // existing provisioned node, never re-funds). kind: 'BTC' | assetHex.
 export async function connectOwnNode(kind) {
