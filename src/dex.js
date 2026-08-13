@@ -114,9 +114,11 @@ export async function prepareOnchainFill({ mount = 'chain', base, quote, offerId
   const exec = async () => {
     seqob.setSeqobBase(MOUNTS[mount]);
     const wollet = engine.getWollet(), signer = engine.getSigner(), client = engine.getClient();
-    // Receive transparently by default; a confidential-book fill receives to
-    // the blinded address (both legs must blind or the ratio leaks amounts).
-    const receiveAddr = engine.rawAddress(confidential);
+    // The receive address is ALWAYS the confidential form: seqdexSwapRequest
+    // requires a blinding pubkey (the maker's stateless blinder blinds the
+    // taker's receive output to it; change goes there too). This settlement
+    // variant has no transparent-receive mode.
+    const receiveAddr = engine.rawAddress(true);
     const buildRequest = async () => engine.withWollet(async () => {
       const sreq = wollet.seqdexSwapRequest(
         new AssetId(q.payAsset), q.payAtoms,
