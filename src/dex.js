@@ -38,7 +38,8 @@ function say(t) { try { progressSink && progressSink(t); } catch {} }
 
 // ---- the relay is the source of truth for offer terms ----
 export async function fetchOffer(mount, base, quote, offerId) {
-  const url = `${MOUNTS[mount]}/v1/market/${encodeURIComponent(base)}/${encodeURIComponent(quote)}/orderbook`;
+  const q = mount === 'conf' ? '?confidential=1' : '';
+  const url = `${MOUNTS[mount]}/v1/market/${encodeURIComponent(base)}/${encodeURIComponent(quote)}/orderbook${q}`;
   const r = await fetch(url, { cache: 'no-store' });
   if (!r.ok) throw new Error('order book unreachable (HTTP ' + r.status + ')');
   const j = await r.json();
