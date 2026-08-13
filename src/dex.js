@@ -339,6 +339,9 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
     if (!phrase) throw new Error('the wallet is locked');
     await ensureOffscreen();
     const job = 'oln' + Date.now() + Math.random().toString(36).slice(2, 8);
+    // The dispatcher writes the started record itself: it must exist even if
+    // the offscreen page dies before its first write.
+    await chrome.storage.local.set({ ['ext.olnjob.' + job]: { done: false, started: true, at: Date.now() } });
     const counterKind = quote === 'BTC' ? 'BTC' : quote;
     await chrome.runtime.sendMessage({
       scope: 'oln', op: 'swap', job,
