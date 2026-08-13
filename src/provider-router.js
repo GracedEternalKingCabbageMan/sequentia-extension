@@ -215,9 +215,10 @@ export async function handleDappRequest(origin, method, params = {}) {
     }
 
     case 'dexJobResult': {
-      // Silent poll for a dispatched Lightning-swap job's outcome.
+      // Silent poll for a dispatched Lightning-swap job's outcome. Without a
+      // jobId, returns the newest job (recovery after a worker restart).
       await requireConnected(origin);
-      return await dex.jobResult(String(params.jobId || ''));
+      return await dex.jobResult(params.jobId ? String(params.jobId) : null);
     }
 
     case 'lnRequestInbound': {

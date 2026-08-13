@@ -375,9 +375,20 @@ async function ensureOffscreen() {
 }
 
 export async function jobResult(jobId) {
-  const key = 'ext.olnjob.' + String(jobId);
-  const o = await chrome.storage.local.get(key);
-  return o[key] || { done: false };
+  if (jobId) {
+    const key = 'ext.olnjob.' + String(jobId);
+    const o = await chrome.storage.local.get(key);
+    return o[key] || { done: false };
+  }
+  // No id: the newest job (a page that lost its jobId to a worker restart
+  // can still recover the outcome).
+  const all = await chrome.storage.local.get(null);
+  let best = null, bestKey = null;
+  for (const [k, v] of Object.entries(all)) {
+    if (!k.startsWith('ext.olnjob.')) continue;
+    if (!best || (v.at || 0) > (best.at || 0)) { best = v; bestKey = k; }
+  }
+  return best ? { ...best, jobId: bestKey.slice('ext.olnjob.'.length) } : { done: false, none: true };
 }
 
 // ---- PSET bip32-derivation stripping (verbatim from the proven web-wallet
