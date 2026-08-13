@@ -32,10 +32,13 @@ self.addEventListener('error', (e) => {
 self.addEventListener('unhandledrejection', (e) => {
   stSet('local', 'ext.lastError', { at: Date.now(), msg: 'unhandledrejection: ' + String((e.reason && e.reason.message) || e.reason) }).catch(() => {});
 });
+const bootAt = Date.now();
 let hbTimer = null;
+let hbStage = 'boot';
 export function heartbeat(stage) {
-  stSet('local', 'ext.heartbeat', { at: Date.now(), stage }).catch(() => {});
-  if (!hbTimer) hbTimer = setInterval(() => stSet('local', 'ext.heartbeat', { at: Date.now(), stage: 'alive' }).catch(() => {}), 5000);
+  if (stage) hbStage = stage;
+  stSet('local', 'ext.heartbeat', { at: Date.now(), bootAt, aliveSecs: Math.round((Date.now() - bootAt) / 1000), stage: hbStage }).catch(() => {});
+  if (!hbTimer) hbTimer = setInterval(() => heartbeat(), 5000);
 }
 heartbeat('boot');
 
@@ -86,6 +89,7 @@ ln.setProgressSink((text) => {
   chrome.runtime.sendMessage({ scope: 'ui-event', event: 'ln-progress', text }).catch(() => {});
 });
 dex.setProgressSink((text) => {
+  heartbeat(text);
   chrome.runtime.sendMessage({ scope: 'ui-event', event: 'ln-progress', text }).catch(() => {});
   emitToAll('dexProgress', { text });
 });
