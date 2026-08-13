@@ -12,6 +12,7 @@ import * as ln from './ln.js';
 import * as dex from './dex.js';
 import * as A from './assets.js';
 import { sessionMnemonic } from './vault.js';
+import { stGet } from './util.js';
 
 // ---- pending approvals ----
 const pending = new Map();
@@ -123,7 +124,6 @@ export async function handleDappRequest(origin, method, params = {}) {
 
     case 'debugState': {
       // Diagnostic read (no secrets): last crash breadcrumb + heartbeat.
-      const { stGet } = await import('./util.js');
       return {
         lastError: await stGet('local', 'ext.lastError'),
         heartbeat: await stGet('local', 'ext.heartbeat'),
