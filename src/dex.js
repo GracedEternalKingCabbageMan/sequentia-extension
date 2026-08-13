@@ -335,10 +335,10 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
     const counterKind = quote === 'BTC' ? 'BTC' : quote;
     say('Bringing your ' + bm.ticker + ' Lightning node online…');
     const provBase = await ln.connectOwnNode(base);
-    await waitNodeReady({ nodeKey: provBase.key, onProgress: () => say('Preparing your ' + bm.ticker + ' node…') });
+    await ln.waitNodeReadyPatient(provBase.key, bm.ticker);
     say('Bringing your ' + qm.ticker + ' Lightning node online…');
     const provCounter = await ln.connectOwnNode(counterKind);
-    await waitNodeReady({ nodeKey: provCounter.key, onProgress: () => say('Preparing your ' + qm.ticker + ' node…') });
+    await ln.waitNodeReadyPatient(provCounter.key, qm.ticker);
     // Best-effort JIT inbound on the RECEIVING leg (a funded channel may
     // already have room; the LSP tops up when it does not).
     say('Ensuring inbound capacity on your receiving leg…');
