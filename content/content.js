@@ -1,25 +1,41 @@
 // Content script (isolated world): relays window.sequentia requests from the
 // page to the background service worker, and wallet events back to the page.
+//
+// Requests prefer the long-lived PORT channel: sendMessage response callbacks
+// die at Chrome's ~5-minute cap, which is shorter than a Lightning swap or a
+// node revival. sendMessage remains the bootstrap fallback.
 (() => {
   const TAG = '__sequentiaWallet';
   let eventPort = null;
+  const portPending = new Map();   // reqId -> true (response routed to page)
 
   function ensureEventPort() {
-    if (eventPort) return;
+    if (eventPort) return eventPort;
     try {
       eventPort = chrome.runtime.connect({ name: 'seq-dapp' });
       eventPort.onMessage.addListener((m) => {
-        if (m && m.event) window.postMessage({ [TAG]: 'event', event: m.event, data: m.data }, window.location.origin);
+        if (!m) return;
+        if (m.__res != null) {
+          if (portPending.delete(m.__res)) {
+            window.postMessage({ [TAG]: 'res', id: m.__res, ok: !!m.ok, result: m.result, error: m.error }, window.location.origin);
+          }
+          return;
+        }
+        if (m.event) window.postMessage({ [TAG]: 'event', event: m.event, data: m.data }, window.location.origin);
       });
-      eventPort.onDisconnect.addListener(() => { eventPort = null; });
+      eventPort.onDisconnect.addListener(() => {
+        eventPort = null;
+        // The worker restarted: fail outstanding port requests honestly.
+        for (const id of portPending.keys()) {
+          window.postMessage({ [TAG]: 'res', id, ok: false, error: 'the wallet restarted; check your balances before retrying' }, window.location.origin);
+        }
+        portPending.clear();
+      });
     } catch { eventPort = null; }
+    return eventPort;
   }
 
-  window.addEventListener('message', (ev) => {
-    if (ev.source !== window || !ev.data || ev.data[TAG] === undefined) return;
-    const m = ev.data;
-    if (m[TAG] === 'listen') { ensureEventPort(); return; }
-    if (m[TAG] !== 'req') return;
+  function viaSendMessage(m) {
     chrome.runtime.sendMessage({ scope: 'dapp', method: m.method, params: m.params }, (resp) => {
       const err = chrome.runtime.lastError;
       if (err) {
@@ -27,12 +43,27 @@
         return;
       }
       if (resp && resp.ok) {
-        // A successful connect implies the page will want events.
         if (m.method === 'connect') ensureEventPort();
         window.postMessage({ [TAG]: 'res', id: m.id, ok: true, result: resp.result }, window.location.origin);
       } else {
         window.postMessage({ [TAG]: 'res', id: m.id, ok: false, error: (resp && resp.error) || 'request failed' }, window.location.origin);
       }
     });
+  }
+
+  window.addEventListener('message', (ev) => {
+    if (ev.source !== window || !ev.data || ev.data[TAG] === undefined) return;
+    const m = ev.data;
+    if (m[TAG] === 'listen') { ensureEventPort(); return; }
+    if (m[TAG] !== 'req') return;
+    const port = ensureEventPort();
+    if (port) {
+      try {
+        portPending.set(m.id, true);
+        port.postMessage({ __req: m.id, method: m.method, params: m.params });
+        return;
+      } catch { portPending.delete(m.id); eventPort = null; }
+    }
+    viaSendMessage(m);
   });
 })();
