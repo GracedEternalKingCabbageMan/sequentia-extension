@@ -359,19 +359,15 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
 }
 
 async function ensureOffscreen() {
-  try {
-    const has = await chrome.offscreen.hasDocument();
-    if (has) return;
-  } catch {}
-  try {
-    await chrome.offscreen.createDocument({
-      url: 'offscreen.html',
-      reasons: ['WORKERS'],
-      justification: 'Long-lived Lightning signer sessions outlive service worker limits',
-    });
-  } catch (e) {
-    if (!String(e && e.message).includes('single offscreen')) throw e;
-  }
+  // Always recreate: a surviving document runs the code it was created with,
+  // and a stale one silently ran outdated job logic after an update. One job
+  // at a time by design, so closing an idle document is safe.
+  try { await chrome.offscreen.closeDocument(); } catch {}
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['WORKERS'],
+    justification: 'Long-lived Lightning signer sessions outlive service worker limits',
+  });
 }
 
 export async function jobResult(jobId) {
