@@ -45,6 +45,9 @@ export async function fetchOffer(mount, base, quote, offerId) {
   const j = await r.json();
   const o = (j.offers || []).find((x) => x.offer_id === offerId);
   if (!o) throw new Error('that offer is no longer on the book; refresh and pick another');
+  // The relay protojson-encodes bytes fields as base64; normalize exactly like
+  // the courier's own fetchBook does (covenant terms et al become hex).
+  seqob.normRelayOffer(o);
   const now = Math.floor(Date.now() / 1000);
   if (Number(o.expires_at_unix || 0) > 0 && Number(o.expires_at_unix) <= now) throw new Error('that offer has expired');
   return o;
