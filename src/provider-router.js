@@ -57,7 +57,10 @@ function requestApproval(origin, method, display, exec) {
   });
 }
 
-// The approval page decided. Executes the underlying operation on approve.
+// The approval page decided. On approve the operation runs asynchronously:
+// the approval tab closes immediately (no "Working…" purgatory, and its own
+// message channel cannot outlive Chrome's cap anyway); the outcome flows to
+// the requesting page over the port channel.
 export async function decideApproval(id, approve) {
   const p = pending.get(id);
   if (!p) throw new Error('this request has expired');
@@ -66,14 +69,11 @@ export async function decideApproval(id, approve) {
     p.reject(new Error('the user rejected the request'));
     return { done: true };
   }
-  try {
-    const result = await p.exec();
-    p.resolve(result);
-    return { done: true };
-  } catch (e) {
-    p.reject(e instanceof Error ? e : new Error(String(e)));
-    throw e;
-  }
+  (async () => {
+    try { p.resolve(await p.exec()); }
+    catch (e) { p.reject(e instanceof Error ? e : new Error(String(e))); }
+  })();
+  return { done: true };
 }
 
 // ---- account info ----

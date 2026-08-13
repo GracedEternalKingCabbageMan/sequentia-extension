@@ -33,6 +33,20 @@ chrome.runtime.onConnect.addListener((port) => {
     if (!origin) return;
     if (!dappPorts.has(origin)) dappPorts.set(origin, new Set());
     dappPorts.get(origin).add(port);
+    // Long-lived request channel: sendMessage response callbacks die at
+    // Chrome's ~5-minute cap, which killed multi-minute swaps mid-flight.
+    // Port messages have no such cap; the content script prefers this path.
+    port.onMessage.addListener((m) => {
+      if (!m || m.__req == null) return;
+      (async () => {
+        try {
+          const result = await router.handleDappRequest(origin, m.method, m.params || {});
+          try { port.postMessage({ __res: m.__req, ok: true, result }); } catch {}
+        } catch (e) {
+          try { port.postMessage({ __res: m.__req, ok: false, error: String((e && e.message) ?? e) }); } catch {}
+        }
+      })();
+    });
     port.onDisconnect.addListener(() => {
       const s = dappPorts.get(origin);
       if (s) { s.delete(port); if (!s.size) dappPorts.delete(origin); }
