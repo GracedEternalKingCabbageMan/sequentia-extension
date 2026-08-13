@@ -24,6 +24,21 @@ import {
 import { stGet, stSet, parseAtoms } from './src/util.js';
 import { EXPLORER_TX, EXPLORER_T4_TX } from './src/config.js';
 
+// ---- crash breadcrumbs: record the worker's last breath so a death mid-
+// operation is diagnosable from the next boot (read via the debug method).
+self.addEventListener('error', (e) => {
+  stSet('local', 'ext.lastError', { at: Date.now(), msg: String(e.message || e), src: String(e.filename || ''), line: e.lineno || 0 }).catch(() => {});
+});
+self.addEventListener('unhandledrejection', (e) => {
+  stSet('local', 'ext.lastError', { at: Date.now(), msg: 'unhandledrejection: ' + String((e.reason && e.reason.message) || e.reason) }).catch(() => {});
+});
+let hbTimer = null;
+export function heartbeat(stage) {
+  stSet('local', 'ext.heartbeat', { at: Date.now(), stage }).catch(() => {});
+  if (!hbTimer) hbTimer = setInterval(() => stSet('local', 'ext.heartbeat', { at: Date.now(), stage: 'alive' }).catch(() => {}), 5000);
+}
+heartbeat('boot');
+
 // ---- dapp event ports (content scripts subscribe after connect) ----
 const dappPorts = new Map();   // origin -> Set<Port>
 chrome.runtime.onConnect.addListener((port) => {

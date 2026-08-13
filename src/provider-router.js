@@ -121,6 +121,15 @@ export async function handleDappRequest(origin, method, params = {}) {
     case 'getNetwork':
       return { network: engine.getNetworkName() };
 
+    case 'debugState': {
+      // Diagnostic read (no secrets): last crash breadcrumb + heartbeat.
+      const { stGet } = await import('./util.js');
+      return {
+        lastError: await stGet('local', 'ext.lastError'),
+        heartbeat: await stGet('local', 'ext.heartbeat'),
+      };
+    }
+
     case 'getAccounts': {
       // Silent: never prompts. Empty until connected AND unlocked.
       if (!(await perms.isConnected(origin))) return { accounts: [] };
