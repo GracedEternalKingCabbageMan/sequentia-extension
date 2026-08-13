@@ -208,7 +208,7 @@ export async function requestInbound({ kind, atoms }) {
   say('Bringing your ' + meta.ticker + ' Lightning node online…');
   const prov = await connectOwnNode(kind);
   say('Preparing your Lightning node…');
-  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node…') });
+  await waitNodeReadyPatient(prov.key, meta.ticker);
   say('Requesting inbound capacity…');
   const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
   const r = await seqlnChannelInbound({ node_key, asset: kind === 'BTC' ? undefined : kind, amount: Number(atoms) });
@@ -225,7 +225,7 @@ export async function createInvoice({ kind, atoms, memo }) {
   // attaches, and its RPC socket appears only seconds later — calling
   // lightning-cli before that fails with "lightning-rpc: No such file".
   say('Preparing your Lightning node (booting and syncing)…');
-  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node (booting and syncing)…') });
+  await waitNodeReadyPatient(prov.key, meta.ticker);
   const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
   say('Ensuring inbound liquidity…');
   try { await seqlnChannelInbound({ node_key, asset: kind === 'BTC' ? undefined : kind, amount: Number(atoms) }); } catch {}
@@ -241,7 +241,7 @@ export async function payInvoice({ kind, bolt11 }) {
   say('Bringing your ' + meta.ticker + ' Lightning node online…');
   const prov = await connectOwnNode(kind);
   say('Preparing your Lightning node…');
-  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node…') });
+  await waitNodeReadyPatient(prov.key, meta.ticker);
   const node_key = kind === 'BTC' ? await btcNodeKey() : await assetNodeKey(kind);
   say('Paying over Lightning…');
   const r = await seqlnNodePay({ node_key, bolt11 });
@@ -263,7 +263,7 @@ export async function moveToLightning({ kind, atoms }) {
   say('Provisioning your ' + meta.ticker + ' Lightning node…');
   const prov = await connectOwnNode(kind);
   say('Preparing your Lightning node (booting and syncing)…');
-  await waitNodeReady({ nodeKey: prov.key, onProgress: () => say('Preparing your Lightning node (booting and syncing)…') });
+  await waitNodeReadyPatient(prov.key, meta.ticker);
   say('Node ready. Preparing the on-chain deposit…');
   const moveRec = { chain: isBtc ? 'btc' : 'seq', asset: isBtc ? undefined : kind, amount: Number(atoms), node: prov.key, ticker: meta.ticker };
   const phases = {
