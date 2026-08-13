@@ -203,7 +203,11 @@ async function prepareCovenantFill(o, takeBase) {
     fee: { asset: fee.asset, atoms: fee.atoms.toString() },
     noteOwnTx: engine.noteOwn,
     onStatus: say,
-    opts: {},
+    // The live maker fleet re-quotes, so its covenants keep a key-path cancel
+    // (non-NUMS internal key). For the TAKER that is availability risk, not
+    // fund risk: the fill is one atomic transaction, and a maker cancel merely
+    // voids the order. Opt in, and disclose it on the approval sheet.
+    opts: { makerCancellableOK: true },
   };
   const hooks = makeCovenantHooks(ctx);
 
@@ -211,7 +215,7 @@ async function prepareCovenantFill(o, takeBase) {
   // the approval sheet (the recipe, not our display math, is what settles).
   const ct = synth.covenant;
   const spkHex = await hooks.fetchUtxoSpk(ct.covenant_txid || ct.covenantTxid, ct.covenant_vout ?? ct.covenantVout ?? 0);
-  const recipe = planFillFromMatched(synth, spkHex, {});
+  const recipe = planFillFromMatched(synth, spkHex, { makerCancellableOK: true });
   const payAsset = revHexStr(recipe.creditAsset);
   const recvAsset = revHexStr(recipe.covenantAsset);
   const pm = A.assetMeta(payAsset), rm = A.assetMeta(recvAsset), fm = A.assetMeta(fee.asset);
@@ -224,7 +228,8 @@ async function prepareCovenantFill(o, takeBase) {
     ],
     detail: (recipe.partial ? 'Partial fill; the remainder re-locks in a fresh covenant for the next taker. ' : 'Fills the whole order. ')
       + 'Network fee ≈ ' + fmtAtoms(fee.atoms, fm.precision || 0) + ' ' + fm.ticker
-      + ' · consensus-exact: the chain rejects any underpay or redirect.',
+      + ' · consensus-exact: the chain rejects any underpay or redirect.'
+      + ' The maker can cancel this order until your fill confirms; a cancel voids the fill and nothing of yours moves.',
   };
 
   const exec = async () => {
