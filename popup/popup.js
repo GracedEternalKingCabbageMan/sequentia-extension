@@ -193,14 +193,28 @@ function moveDialog(r) {
   lnProgressTarget = st;
   ok.onclick = async () => {
     ok.disabled = no.disabled = true;
+    // Once the deposit is SENT the move is persisted and self-healing (the
+    // background worker finishes or resumes the channel open), so the dialog
+    // must stop holding the user hostage: Cancel becomes a real exit.
+    const watch = setInterval(() => {
+      if (/deposit sent|waiting for (the deposit|it) to confirm|opening the lightning channel|funding broadcast/i.test(st.textContent)) {
+        no.disabled = false; no.textContent = 'Continue in background';
+        no.onclick = () => { clearInterval(watch); m.remove(); toast('Your ' + r.ticker + ' channel keeps opening in the background; the balance row shows ⚡ when it is ready.'); };
+      }
+    }, 1000);
     try {
       const atoms = parseAmount(inp.value, r.precision);
       st.textContent = 'Starting…';
       await rpc('lnMove', { kind: r.key, amount: atoms.toString() });
+      clearInterval(watch);
       st.className = 'status ok'; st.textContent = 'Done. Your ' + r.ticker + ' Lightning channel is active.';
-      no.textContent = 'Close'; no.disabled = false;
+      no.textContent = 'Close'; no.disabled = false; no.onclick = () => m.remove();
       refreshOverview();
-    } catch (e) { st.className = 'status err'; st.textContent = 'Failed: ' + e.message; ok.disabled = no.disabled = false; }
+    } catch (e) {
+      clearInterval(watch);
+      st.className = 'status err'; st.textContent = 'Failed: ' + e.message;
+      ok.disabled = no.disabled = false;
+    }
   };
 }
 function closeDialog(r) {
