@@ -7,10 +7,14 @@
 // messaging (trusted contexts only) and never leaves this page.
 import {
   initSeqln, provisionAndConnect, waitNodeReady, seqlnChannelInbound, seqlnSwap,
-  seqlnNodeInvoice, provisionedState, deviceTransportPubkey,
+  seqlnNodeInvoice, seqlnInvoiceStatus, seqlnNodeSettle, seqlnNodePay,
+  provisionedState, deviceTransportPubkey,
 } from './vendor/seqln.js';
+import {
+  Crypter, signOffer, randHex, makerKeyFromSeed, setSeqobBase, seqobBase,
+} from './vendor/seqob.js';
 import { lnDeriveNode, lnDeriveAsset } from './vendor/seqln-keys.js';
-import { LSP } from './src/config.js';
+import { LSP, BASE } from './src/config.js';
 
 initSeqln({
   lspUrl: LSP.url,
@@ -160,6 +164,148 @@ async function runSwap(job, p, marks) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// RESTING MAKER: the wallet serves a pure-LN limit order's resting remainder,
+// speaking the Go maker's five-message protocol (xcourier_pureln.go). The
+// relay binds this WS when the offer is posted over it and delivers
+// lift_requested here; every session is E2E-encrypted (ECDH + AES-GCM)
+// between the offer's maker key and the taker's session key. Presence is
+// honest: the offer lives while this document lives, and expiry reaps it.
+async function makerSeedHex(phrase, tag) {
+  const data = new TextEncoder().encode('seqdex-lndex-maker:' + tag + ':' + phrase);
+  const h = await crypto.subtle.digest('SHA-256', data);
+  return [...new Uint8Array(h)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+function b64e(bytes) { let x = ''; for (let i = 0; i < bytes.length; i++) x += String.fromCharCode(bytes[i]); return btoa(x); }
+function b64d(b64) { const bin = atob(b64); const a = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i); return a; }
+const teEnc = new TextEncoder(), tdDec = new TextDecoder();
+// ceil/floor variants of the daemon's proportional quote (BigInt, no overflow).
+const propCeil = (whole, take, base) => (take >= base ? whole : (whole * take + base - 1n) / base);
+const propFloor = (whole, take, base) => (take >= base ? whole : (whole * take) / base);
+
+async function runRest(job, p) {
+  const key = 'ext.olnjob.' + job;
+  const mk = makerKeyFromSeed(await makerSeedHex(p.phrase, p.base + '/' + p.counterKind));
+  const provBase = await connectOwn(p.base, p.phrase, p.baseTicker);
+  const provCounter = await connectOwn(p.counterKind, p.phrase, p.counterTicker);
+  await waitPatient(job, provBase.key, p.baseTicker);
+  await waitPatient(job, provCounter.key, p.counterTicker);
+  const sell = p.side === 'sell';           // maker sells base (rests an ask)
+  const pre = p.prefill || {};
+  const state = {
+    remaining: BigInt(p.baseAtoms), quoteRemaining: BigInt(p.quoteAtoms),
+    filled: BigInt(pre.baseAtoms || '0'), quoteFilled: BigInt(pre.quoteAtoms || '0'),
+    offerId: null, fills: (pre.slices || []).filter((x) => x.ok).map((x) => ({ crossing: true, ...x })),
+  };
+  const ws = new WebSocket((BASE + '/seqob-pln').replace(/^http/, 'ws') + '/v1/ws');
+  const send = (o) => { try { ws.send(JSON.stringify(o)); } catch {} };
+  const post = () => {
+    const o = {
+      offer_id: randHex(16), schema_version: 1,
+      pair: { base_asset: p.base, quote_asset: p.counterKind === 'BTC' ? 'BTC' : p.counterKind, confidential: false },
+      trade_dir: sell ? 'TRADE_DIR_SELL' : 'TRADE_DIR_BUY',
+      base_amount: state.remaining.toString(),
+      offer_amount: (sell ? state.remaining : state.quoteRemaining).toString(),
+      offer_asset: sell ? p.base : (p.counterKind === 'BTC' ? 'BTC' : p.counterKind),
+      want_amount: (sell ? state.quoteRemaining : state.remaining).toString(),
+      want_asset: sell ? (p.counterKind === 'BTC' ? 'BTC' : p.counterKind) : p.base,
+      allow_partial: true, min_fill: '0',
+      created_at_unix: String(Math.floor(Date.now() / 1000)),
+      expires_at_unix: String(Math.floor(Date.now() / 1000) + 3600),
+      fee_asset_hint: '', min_anchor_depth: 0,
+      maker_ln_node_pubkey: provBase.nodeId || '',
+      ln_connect_hints: [], time_in_force: 'TIME_IN_FORCE_UNSPECIFIED', confidential: false,
+      lightning: { ln_direction: sell ? 3 : 2 },
+    };
+    signOffer(o, mk);
+    state.offerId = o.offer_id;
+    send({ offer_submit: o });
+    progress(job, 'Resting ' + (sell ? 'ask' : 'bid') + ': ' + state.remaining + ' atoms on the book.');
+    store(key, { done: false, resting: true, offerId: state.offerId,
+      remaining: state.remaining.toString(), filledAtoms: state.filled.toString(),
+      quoteAtoms: state.quoteFilled.toString(), fills: state.fills, at: Date.now() });
+  };
+
+  const sessions = new Map();               // session_id -> raw swap_msg sink
+  async function serve(lr) {
+    const sid = lr.session_id || lr.sessionId;
+    const takerPubB64 = lr.taker_session_pubkey || lr.takerSessionPubkey;
+    const takerPub = /^[0-9a-fA-F]{66}$/.test(String(takerPubB64)) ? String(takerPubB64) : b64d(takerPubB64);
+    let takeReq = 0n; try { takeReq = BigInt(String(lr.take_amount || lr.takeAmount || '0')); } catch {}
+    const take = takeReq > 0n && takeReq < state.remaining ? takeReq : state.remaining;
+    // Lifting my ASK the taker BUYS (floor); lifting my BID the taker SELLS (ceil).
+    const q = sell ? propFloor(state.quoteRemaining, take, state.remaining)
+                   : propCeil(state.quoteRemaining, take, state.remaining);
+    const cr = await Crypter.fromECDH(mk, takerPub);
+    const inbox = []; let wake = null;
+    sessions.set(sid, (sm) => { inbox.push(sm); if (wake) { const w = wake; wake = null; w(); } });
+    const recv = async (type, ms) => {
+      const t0 = Date.now();
+      for (;;) {
+        while (inbox.length) {
+          const sm = inbox.shift();
+          let m; try { m = JSON.parse(tdDec.decode(await cr.open(b64d(sm.ciphertext)))); } catch { continue; }
+          if (m.type === type) return m;
+          if (m.type === 'xc_fail') throw new Error('taker: ' + (m.reason || 'failed'));
+        }
+        if (Date.now() - t0 > ms) throw new Error('timeout waiting ' + type);
+        await new Promise((r) => { wake = r; setTimeout(r, 1500); });
+      }
+    };
+    const say = async (m) => send({ swap_msg: { session_id: sid, ciphertext: b64e(await cr.seal(teEnc.encode(JSON.stringify(m)))) } });
+    try {
+      await recv('pln_terms_request', 90_000);
+      const inNodeId = sell ? provCounter.nodeId : provBase.nodeId;   // the leg the taker pays
+      await say({ type: 'pln_terms', maker_ln_node_id: inNodeId, btc_amount: Number(q), seq_amount: Number(take) });
+      const inv = await recv('pln_asset_invoice', 90_000);
+      const H = String(inv.hash_h || '').toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(H)) throw new Error('bad hash from taker');
+      const inKey = sell ? provCounter.key : provBase.key;
+      const inAsset = sell ? (p.counterKind === 'BTC' ? undefined : p.counterKind) : p.base;
+      await seqlnNodeInvoice({ node_key: inKey, asset: inAsset, amount: Number(sell ? q : take), payment_hash: H, expiry: 900 });
+      await say({ type: 'pln_hold_ready', hash_h: H });
+      const hDead = Date.now() + 150_000;
+      for (;;) {
+        const st = await seqlnInvoiceStatus({ node_key: inKey, payment_hash: H }).catch(() => ({}));
+        if (st.held || st.state === 'accepted') break;
+        if (Date.now() > hDead) throw new Error('taker never paid the hold');
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      const outKey = sell ? provBase.key : provCounter.key;
+      const paid = await seqlnNodePay({ node_key: outKey, bolt11: inv.bolt11, wantHash: H });
+      const P = String((paid && (paid.preimage || paid.payment_preimage)) || '').toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(P)) throw new Error('pay returned no preimage');
+      await seqlnNodeSettle({ node_key: inKey, payment_hash: H, preimage: P });
+      await say({ type: 'pln_settled' });
+      state.remaining -= take; state.quoteRemaining -= q;
+      state.filled += take; state.quoteFilled += q;
+      state.fills.push({ takeAtoms: take.toString(), quoteAtoms: q.toString(), at: Date.now() });
+      progress(job, 'Resting order filled: ' + take + ' atoms; ' + state.remaining + ' remain.');
+      if (state.remaining > 0n) post();
+      else {
+        await storeSure(key, { done: true, ok: true, result: { rested: true, settled: true,
+          baseAtoms: state.filled.toString(), quoteAtoms: state.quoteFilled.toString(), fills: state.fills }, at: Date.now() });
+        try { ws.close(); } catch {}
+      }
+    } catch (e) {
+      progress(job, 'A lift on your resting order failed (' + String((e && e.message) || e).slice(0, 60) + '); the order rests on.');
+      try { await say({ type: 'xc_fail', reason: String((e && e.message) || e).slice(0, 80) }); } catch {}
+    } finally { sessions.delete(sid); }
+  }
+
+  ws.onopen = () => post();
+  ws.onmessage = (ev) => {
+    let m; try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : tdDec.decode(new Uint8Array(ev.data))); } catch { return; }
+    const lr = m.lift_requested || m.liftRequested;
+    if (lr && String(lr.offer_id || lr.offerId) === String(state.offerId)) { serve(lr); return; }
+    const sm = m.swap_msg || m.swapMsg;
+    if (sm) { const h = sessions.get(sm.session_id || sm.sessionId); if (h) h(sm); }
+  };
+  const pinger = setInterval(() => { chrome.runtime.sendMessage({ scope: 'oln-ping', job }).catch(() => {}); }, 15000);
+  ws.onclose = () => clearInterval(pinger);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || msg.scope !== 'oln') return;
   // Liveness + build handshake: the dispatcher reuses this document (keeping
@@ -208,6 +354,52 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         progress(msg.job, 'Market order finished.');
       } finally { clearInterval(pinger); }
       chrome.runtime.sendMessage({ scope: 'oln-done', job: msg.job }).catch(() => {});
+    })();
+    return false;
+  }
+  // Limit order: walk the crossing slices first (same loop as a market order),
+  // then hand the remainder to the resting-maker engine under the SAME job.
+  if (msg.op === 'limit') {
+    sendResponse({ accepted: true });
+    (async () => {
+      const key = 'ext.olnjob.' + msg.job;
+      await storeSure(key, { done: false, started: true, offscreen: true, limit: true, at: Date.now() });
+      const p = msg.params;
+      const done = [];
+      let filled = 0n, quoteTotal = 0n;
+      for (let i = 0; i < (p.slices || []).length; i++) {
+        const s = p.slices[i];
+        progress(msg.job, 'Limit order: crossing fill ' + (i + 1) + ' of ' + p.slices.length + '…');
+        try {
+          const r = await runSwap(msg.job, {
+            phrase: p.phrase, base: p.base, counterKind: p.counterKind, side: p.side,
+            baseTicker: p.baseTicker, counterTicker: p.counterTicker,
+            recvAtoms: p.side === 'buy' ? s.takeAtoms : s.quoteAtoms,
+            amountUnits: Number(s.takeAtoms) / Math.pow(10, p.basePrecision || 0),
+            offerId: s.offerId, makerPubkey: s.makerPubkey,
+            takeAtomsNum: s.takeAtomsNum, takeAtoms: s.takeAtoms, quoteAtoms: s.quoteAtoms,
+          }, []);
+          filled += BigInt(r.baseAtoms || s.takeAtoms);
+          quoteTotal += BigInt(r.quoteAtoms || s.quoteAtoms);
+          done.push({ ok: true, offerId: s.offerId });
+        } catch (e) { done.push({ ok: false, offerId: s.offerId, error: String((e && e.message) ?? e) }); }
+      }
+      const restBase = BigInt(p.restBase || '0');
+      if (restBase <= 0n) {
+        await storeSure(key, { done: true, ok: done.some((d) => d.ok) || !p.slices.length,
+          result: { settled: filled > 0n, baseAtoms: filled.toString(), quoteAtoms: quoteTotal.toString(), slices: done }, at: Date.now() });
+        chrome.runtime.sendMessage({ scope: 'oln-done', job: msg.job }).catch(() => {});
+        return;
+      }
+      try {
+        await runRest(msg.job, { ...p, baseAtoms: p.restBase, quoteAtoms: p.restQuote,
+          prefill: { baseAtoms: filled.toString(), quoteAtoms: quoteTotal.toString(), slices: done } });
+      } catch (e) {
+        await storeSure(key, { done: true, ok: filled > 0n,
+          error: 'resting failed: ' + String((e && e.message) ?? e),
+          result: { settled: filled > 0n, baseAtoms: filled.toString(), quoteAtoms: quoteTotal.toString(), slices: done }, at: Date.now() });
+        chrome.runtime.sendMessage({ scope: 'oln-done', job: msg.job }).catch(() => {});
+      }
     })();
     return false;
   }
