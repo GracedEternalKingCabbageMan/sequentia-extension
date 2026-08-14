@@ -1,7 +1,15 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head><meta charset="utf-8"><title>Ambra worker</title></head>
 <body>
-<script type="module" src="offscreen.js"></script>
+<script type="module">
+  // Loader: import the engine with a version-busted URL. Brave caches
+  // chrome-extension:// resources across extension reloads, and a stale cached
+  // offscreen.js kept serving maker lifts with OUTDATED protocol semantics
+  // (seen live three builds in a row). The document itself is created with
+  // ?v=<version>, forwarded here, so both layers miss the cache.
+  const v = new URLSearchParams(location.search).get('v') || Date.now();
+  import('./offscreen.js?v=' + encodeURIComponent(v));
+</script>
 </body>
 </html>

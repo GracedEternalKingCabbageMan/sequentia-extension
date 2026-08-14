@@ -560,7 +560,7 @@ async function ensureOffscreen() {
   } catch {}
   try { await chrome.offscreen.closeDocument(); } catch {}
   await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
+    url: 'offscreen.html?v=' + encodeURIComponent(version),
     reasons: ['WORKERS'],
     justification: 'Long-lived Lightning signer sessions outlive service worker limits',
   });
