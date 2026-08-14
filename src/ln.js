@@ -108,7 +108,12 @@ export async function connectOwnNode(kind) {
 // the user's own nodes across restarts, then cache the status snapshot.
 let _keysSig = '';
 async function refreshOwnKeys() {
-  const held = Object.keys((await engine.balances()).seq || {}).filter((h) => { const e = A.feeRateEntry(h); return e && e.rate > 0; });
+  const heldChain = Object.keys((await engine.balances()).seq || {}).filter((h) => { const e = A.feeRateEntry(h); return e && e.rate > 0; });
+  // Assets this wallet has EVER swapped over Lightning (recorded at dispatch):
+  // an LN-only balance has no on-chain trace, and skipping its node made the
+  // wallet display "no channel" while the swap engine traded real funds on it.
+  const swapped = (await stGet('local', 'ext.lnAssets')) || [];
+  const held = [...new Set([...heldChain, ...swapped.filter((h) => /^[0-9a-f]{64}$/.test(String(h)))])];
   const sig = held.slice().sort().join(',');
   if (sig === _keysSig) return;
   const keys = [];
@@ -156,8 +161,9 @@ export async function summary(heldHexes) {
   lnInit();
   if (!seqlnState().deployed) return { deployed: false, perKind: {} };
   try { await refreshStatus(); } catch { return { deployed: true, perKind: {}, unreachable: true }; }
+  const swapped = (await stGet('local', 'ext.lnAssets').catch(() => null)) || [];
   const perKind = {};
-  for (const k of ['BTC', ...heldHexes]) {
+  for (const k of [...new Set(['BTC', ...heldHexes, ...swapped])]) {
     const s = spendableFor(k);
     if (s.channels > 0) perKind[k] = { units: String(Math.round(s.units)), channels: s.channels };
   }
@@ -174,6 +180,8 @@ export function capableKinds(heldHexes) {
 // needs spendable capacity to send and receivable capacity to get paid).
 // Serializable, own channels only.
 export async function channelsSerialized(heldHexes) {
+  const swapped = (await stGet('local', 'ext.lnAssets').catch(() => null)) || [];
+  heldHexes = [...new Set([...(heldHexes || []), ...swapped])];
   lnInit();
   if (!seqlnState().deployed) return { deployed: false, channels: [] };
   await refreshStatus();
