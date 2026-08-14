@@ -171,3 +171,21 @@ Subscribe with `window.sequentia.on(event, handler)`:
 - Anything not yet covered here (for example HTLC secret management for
   cross-chain swaps) should be proposed as a protocol extension in this file
   before being built into the site.
+
+## dexMarketOrder
+
+`request({ method: 'dexMarketOrder', params: { room, base, quote, side, baseAtoms } })`
+
+One-approval market order. The wallet re-fetches the room's order book itself,
+plans a walk across the opposing resting orders best-first (bounded at 5% past
+the best price), and shows a single aggregate approval: total paid, total
+received, number of orders walked. After approval the walk executes inside the
+wallet's persistent engine; the call returns `{ jobId, pending: true }` and the
+site polls `dexJobResult` exactly as for `dexSwapLn`. The finished result is
+`{ market: true, baseAtoms, quoteAtoms, slices: [{ ok, offerId, ... }] }` —
+a failed slice is skipped, never retried blind, and never fails the whole
+order while any slice settled.
+
+- `room`: `'ln'` (pure-Lightning book) — other rooms not yet served.
+- `base`: 32-byte hex asset id. `quote`: 32-byte hex or `'BTC'`.
+- `side`: `'buy' | 'sell'` of the base asset. `baseAtoms`: decimal string.
