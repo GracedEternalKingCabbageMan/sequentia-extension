@@ -1,4 +1,4 @@
-const OFFSCREEN_BUILD = '0.5.10';
+const OFFSCREEN_BUILD = '0.5.11';
 // Offscreen document: the home for LONG Lightning operations. A service
 // worker gets killed by idle clocks and task caps no keepalive fully
 // defeats; this is a real page with neither. The worker hands a job over,
@@ -187,7 +187,12 @@ const propFloor = (whole, take, base) => (take >= base ? whole : (whole * take) 
 
 async function runRest(job, p) {
   const key = 'ext.olnjob.' + job;
-  const mk = makerKeyFromSeed(await makerSeedHex(p.phrase, p.base + '/' + p.counterKind));
+  // The maker identity includes the BUILD stamp: the relay routes lift
+  // sessions by maker pubkey, and a ghost engine (stale cache, orphaned
+  // document) sharing a deterministic key could capture lifts meant for the
+  // live one — seen live answering with obsolete protocol semantics. A ghost
+  // now holds a different, obsolete pubkey whose offers simply expire.
+  const mk = makerKeyFromSeed(await makerSeedHex(p.phrase, OFFSCREEN_BUILD + ':' + p.base + '/' + p.counterKind));
   // The maker pubkey must ride INSIDE the signed lightning terms; extract it
   // by signing a throwaway object (signOffer derives + sets it from the priv).
   const _d = { offer_id: 'x', pair: { base_asset: 'x', quote_asset: 'x' } };
