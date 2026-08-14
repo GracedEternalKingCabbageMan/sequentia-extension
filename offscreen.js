@@ -7,6 +7,7 @@
 // messaging (trusted contexts only) and never leaves this page.
 import {
   initSeqln, provisionAndConnect, waitNodeReady, seqlnChannelInbound, seqlnSwap,
+  seqlnNodeInvoice,
 } from './vendor/seqln.js';
 import { lnDeriveNode, lnDeriveAsset } from './vendor/seqln-keys.js';
 import { LSP } from './src/config.js';
@@ -67,6 +68,32 @@ async function waitPatient(job, nodeKey, label, totalMs = 8 * 60_000) {
   }
 }
 
+// The 902 boot race: a just-revived node answers RPC well before its channels
+// finish re-establishing with their peers, and creating an invoice with route
+// hints then fails ("None of those hints were suitable local channels" — seen
+// live killing a swap before any HTLC existed; the channel became hintable 91s
+// after boot). Creating a throwaway hold-invoice IS the exact readiness test,
+// so keep probing until hints resolve, then let the real swap proceed.
+async function waitHintable(job, nodeKey, asset, label, totalMs = 150_000) {
+  const deadline = Date.now() + totalMs;
+  const rnd = new Uint8Array(32);
+  for (;;) {
+    crypto.getRandomValues(rnd);
+    const hash = [...rnd].map((b) => b.toString(16).padStart(2, '0')).join('');
+    try {
+      await seqlnNodeInvoice({ node_key: nodeKey, asset, amount: 1, payment_hash: hash, expiry: 60 });
+      return;
+    } catch (e) {
+      // Only the hint race is worth waiting out; any other failure belongs to
+      // the swap itself, which will surface it honestly.
+      if (!/hints|suitable|902/i.test(String((e && e.message) ?? e))) return;
+      if (Date.now() > deadline) return;
+      progress(job, 'Your ' + label + ' channel is coming online; holding until it can receive…');
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+}
+
 async function runSwap(job, p) {
   progress(job, 'Bringing your ' + p.baseTicker + ' Lightning node online…');
   const provBase = await connectOwn(p.base, p.phrase, p.baseTicker);
@@ -79,6 +106,10 @@ async function runSwap(job, p) {
     if (p.side === 'buy') await seqlnChannelInbound({ node_key: provBase.key, asset: p.base, amount: Number(p.recvAtoms) });
     else await seqlnChannelInbound({ node_key: provCounter.key, asset: p.counterKind === 'BTC' ? undefined : p.counterKind, amount: Number(p.recvAtoms) });
   } catch {}
+  const recvProv = p.side === 'buy' ? provBase : provCounter;
+  const recvAsset = p.side === 'buy' ? p.base : (p.counterKind === 'BTC' ? undefined : p.counterKind);
+  const recvLabel = p.side === 'buy' ? p.baseTicker : p.counterTicker;
+  await waitHintable(job, recvProv.key, recvAsset, recvLabel);
   progress(job, 'Settling over Lightning…');
   const r = await seqlnSwap({
     side: p.side, asset: p.base, amount: p.amountUnits,
