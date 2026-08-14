@@ -23,7 +23,7 @@ import * as A from './assets.js';
 import * as engine from './engine.js';
 import * as ln from './ln.js';
 import { BASE, ESPLORA, DEFAULT_FEERATE, EXCHANGE_RATE_SCALE } from './config.js';
-import { fmtAtoms } from './util.js';
+import { fmtAtoms, stGet, stSet } from './util.js';
 
 const MOUNTS = {
   ln: BASE + '/seqob-pln',
@@ -338,6 +338,15 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
     const phrase = await sessionMnemonic();
     if (!phrase) throw new Error('the wallet is locked');
     await ensureOffscreen();
+    // Durably record which assets this wallet trades over Lightning: the
+    // balance/status paths use this to query LN-only nodes (an LN balance with
+    // no on-chain trace was otherwise invisible in every display).
+    try {
+      const prev = (await stGet('local', 'ext.lnAssets')) || [];
+      const add = [base, quote].filter((a) => /^[0-9a-f]{64}$/i.test(String(a || '')));
+      const next = [...new Set([...prev, ...add.map((a) => a.toLowerCase())])];
+      if (next.length !== prev.length) await stSet('local', 'ext.lnAssets', next);
+    } catch {}
     const job = 'oln' + Date.now() + Math.random().toString(36).slice(2, 8);
     // The dispatcher writes the started record itself: it must exist even if
     // the offscreen page dies before its first write.

@@ -176,6 +176,12 @@ async function overview({ withLn = false } = {}) {
   // privileged beyond that. Headline = portfolio total in the reference currency.
   push('BTC', bal.btc, true);
   for (const h of Object.keys(bal.seq)) push(h, bal.seq[h], false);
+  // LN-only balances: an asset can live ENTIRELY in Lightning channels (bought
+  // on the LNDEX, zero on-chain trace) — it must show like any other holding.
+  for (const k of Object.keys(lnSum.perKind)) {
+    if (k === 'BTC' || (k in bal.seq)) continue;
+    push(k, 0n, false);
+  }
   for (const [id, atoms] of Object.entries(openamp.balancesMap())) push('oamp:' + id, atoms, false);
   rows.sort((a, b) => (a.key === 'BTC' ? -1 : b.key === 'BTC' ? 1 : (b.refVal || 0) - (a.refVal || 0)));
 
