@@ -1,3 +1,4 @@
+const OFFSCREEN_BUILD = '0.5.6';
 // Offscreen document: the home for LONG Lightning operations. A service
 // worker gets killed by idle clocks and task caps no keepalive fully
 // defeats; this is a real page with neither. The worker hands a job over,
@@ -342,7 +343,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Liveness + build handshake: the dispatcher reuses this document (keeping
   // signer wss links warm across swaps) only when it answers with the current
   // version; a stale or dead doc gets recreated instead.
-  if (msg.op === 'hello') { sendResponse({ version: chrome.runtime.getManifest().version }); return false; }
+  // The build stamp is a LITERAL baked into this file: getManifest() reads the
+  // live manifest and let a STALE document masquerade as current code (seen
+  // live: a pre-update document served a lift with outdated semantics).
+  if (msg.op === 'hello') { sendResponse({ version: OFFSCREEN_BUILD }); return false; }
   // Market walk: sequential slices through the same runSwap engine; one job
   // record aggregates the outcome (a page that lost its jobId still recovers).
   if (msg.op === 'market') {
