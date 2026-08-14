@@ -362,9 +362,17 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
 }
 
 async function ensureOffscreen() {
-  // Always recreate: a surviving document runs the code it was created with,
-  // and a stale one silently ran outdated job logic after an update. One job
-  // at a time by design, so closing an idle document is safe.
+  // REUSE a live document whenever it answers the hello handshake with the
+  // current build version: the document holds the warm Lightning signer wss
+  // links, and recreating it per swap forced a full node bring-up every time
+  // (the bulk of a 24s swap). A silent or version-skewed document — the stale-
+  // code hazard the old always-recreate policy guarded against — is torn down
+  // and rebuilt.
+  const version = chrome.runtime.getManifest().version;
+  try {
+    const r = await chrome.runtime.sendMessage({ scope: 'oln', op: 'hello' });
+    if (r && r.version === version) return;
+  } catch {}
   try { await chrome.offscreen.closeDocument(); } catch {}
   await chrome.offscreen.createDocument({
     url: 'offscreen.html',
