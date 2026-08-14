@@ -7,7 +7,7 @@
 // messaging (trusted contexts only) and never leaves this page.
 import {
   initSeqln, provisionAndConnect, waitNodeReady, seqlnChannelInbound, seqlnSwap,
-  seqlnNodeInvoice,
+  seqlnNodeInvoice, provisionedState, deviceTransportPubkey,
 } from './vendor/seqln.js';
 import { lnDeriveNode, lnDeriveAsset } from './vendor/seqln-keys.js';
 import { LSP } from './src/config.js';
@@ -40,7 +40,20 @@ async function storeSure(key, val) {
   }
 }
 
+// nodeKey -> ms of the last SUCCESSFUL swap step on it. While a node is hot
+// (and its signer never dropped — the offscreen document now OUTLIVES jobs, so
+// wss signer links persist), the bring-up ritual (provision HTTP, readiness
+// poll, inbound ensure, hintability probe) is skipped wholesale: those exist
+// for cold/revived nodes, and re-running them cost ~15s of every warm swap.
+const HOT = {};
+const HOT_TTL = 5 * 60_000;
+
 async function connectOwn(kind, phrase, label) {
+  const expect = kind === 'BTC'
+    ? 'btc:' + String(await deviceTransportPubkey(lnDeriveNode(phrase, 'btc').transportPrivkey)).toLowerCase()
+    : String(kind).toLowerCase();
+  const st = provisionedState()[expect];
+  if (st && st.connected && st.nodeId) return { connected: true, key: expect, nodeId: st.nodeId, warm: true };
   const prov = kind === 'BTC'
     ? await provisionAndConnect({
         chain: 'btc', label: 'BTC', policy: 'enforce',
@@ -94,22 +107,39 @@ async function waitHintable(job, nodeKey, asset, label, totalMs = 150_000) {
   }
 }
 
-async function runSwap(job, p) {
-  progress(job, 'Bringing your ' + p.baseTicker + ' Lightning node online…');
+async function runSwap(job, p, marks) {
+  const mark = (st) => marks.push([st, Date.now()]);
+  mark('start');
   const provBase = await connectOwn(p.base, p.phrase, p.baseTicker);
-  await waitPatient(job, provBase.key, p.baseTicker);
-  progress(job, 'Bringing your ' + p.counterTicker + ' Lightning node online…');
+  mark(provBase.warm ? 'base-warm' : 'base-connected');
   const provCounter = await connectOwn(p.counterKind, p.phrase, p.counterTicker);
-  await waitPatient(job, provCounter.key, p.counterTicker);
-  progress(job, 'Ensuring inbound capacity on your receiving leg…');
-  try {
-    if (p.side === 'buy') await seqlnChannelInbound({ node_key: provBase.key, asset: p.base, amount: Number(p.recvAtoms) });
-    else await seqlnChannelInbound({ node_key: provCounter.key, asset: p.counterKind === 'BTC' ? undefined : p.counterKind, amount: Number(p.recvAtoms) });
-  } catch {}
+  mark(provCounter.warm ? 'counter-warm' : 'counter-connected');
+  const hotBase = provBase.warm && (Date.now() - (HOT[provBase.key] || 0) < HOT_TTL);
+  const hotCounter = provCounter.warm && (Date.now() - (HOT[provCounter.key] || 0) < HOT_TTL);
+  if (!hotBase) {
+    progress(job, 'Bringing your ' + p.baseTicker + ' Lightning node online…');
+    await waitPatient(job, provBase.key, p.baseTicker);
+    mark('base-ready');
+  }
+  if (!hotCounter) {
+    progress(job, 'Bringing your ' + p.counterTicker + ' Lightning node online…');
+    await waitPatient(job, provCounter.key, p.counterTicker);
+    mark('counter-ready');
+  }
   const recvProv = p.side === 'buy' ? provBase : provCounter;
   const recvAsset = p.side === 'buy' ? p.base : (p.counterKind === 'BTC' ? undefined : p.counterKind);
   const recvLabel = p.side === 'buy' ? p.baseTicker : p.counterTicker;
-  await waitHintable(job, recvProv.key, recvAsset, recvLabel);
+  const hotRecv = (p.side === 'buy' ? hotBase : hotCounter);
+  if (!hotRecv) {
+    progress(job, 'Ensuring inbound capacity on your receiving leg…');
+    try {
+      if (p.side === 'buy') await seqlnChannelInbound({ node_key: provBase.key, asset: p.base, amount: Number(p.recvAtoms) });
+      else await seqlnChannelInbound({ node_key: provCounter.key, asset: p.counterKind === 'BTC' ? undefined : p.counterKind, amount: Number(p.recvAtoms) });
+    } catch {}
+    mark('inbound-ensured');
+    await waitHintable(job, recvProv.key, recvAsset, recvLabel);
+    mark('hintable');
+  }
   progress(job, 'Settling over Lightning…');
   const r = await seqlnSwap({
     side: p.side, asset: p.base, amount: p.amountUnits,
@@ -118,6 +148,8 @@ async function runSwap(job, p) {
     offer_id: p.offerId, maker_pubkey: p.makerPubkey,
     take_atoms: p.takeAtomsNum ?? undefined,
   });
+  mark('settled');
+  HOT[provBase.key] = HOT[provCounter.key] = Date.now();
   return {
     settled: true,
     direction: r.direction || (p.side === 'sell' ? 'sold' : 'bought'),
@@ -129,7 +161,12 @@ async function runSwap(job, p) {
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (!msg || msg.scope !== 'oln' || msg.op !== 'swap') return;
+  if (!msg || msg.scope !== 'oln') return;
+  // Liveness + build handshake: the dispatcher reuses this document (keeping
+  // signer wss links warm across swaps) only when it answers with the current
+  // version; a stale or dead doc gets recreated instead.
+  if (msg.op === 'hello') { sendResponse({ version: chrome.runtime.getManifest().version }); return false; }
+  if (msg.op !== 'swap') return;
   sendResponse({ accepted: true });
   (async () => {
     const key = 'ext.olnjob.' + msg.job;
@@ -142,12 +179,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       chrome.runtime.sendMessage({ scope: 'oln-ping', job: msg.job }).catch(() => {});
       store('ext.olnhb.' + msg.job, Date.now()).catch(() => {});
     }, 15000);
+    const marks = [];
     try {
-      const result = await runSwap(msg.job, msg.params);
-      await storeSure(key, { done: true, ok: true, result, at: Date.now() });
+      const result = await runSwap(msg.job, msg.params, marks);
+      await storeSure(key, { done: true, ok: true, result, marks, at: Date.now() });
       progress(msg.job, 'Swap settled.');
     } catch (e) {
-      await storeSure(key, { done: true, ok: false, error: String((e && e.message) ?? e), at: Date.now() });
+      await storeSure(key, { done: true, ok: false, error: String((e && e.message) ?? e), marks, at: Date.now() });
     } finally {
       clearInterval(pinger);
     }
