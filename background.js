@@ -322,12 +322,21 @@ const uiMethods = {
 // ---- message dispatch ----
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Offscreen-document job telemetry: relay progress to the dapp pages.
-  if (msg && (msg.scope === 'oln-progress' || msg.scope === 'oln-done' || msg.scope === 'oln-ping')) {
+  if (msg && (msg.scope === 'oln-progress' || msg.scope === 'oln-done' || msg.scope === 'oln-ping' || msg.scope === 'oln-store')) {
     if (msg.scope === 'oln-progress') emitToAll('dexProgress', { text: msg.text, job: msg.job });
     if (msg.scope === 'oln-done') emitToAll('dexJobDone', { job: msg.job });
     // oln-ping wakes/extends this worker (a live worker retains the offscreen
     // page); stamp its arrival so a post-mortem can see the page was alive.
     if (msg.scope === 'oln-ping') stSet('local', 'ext.olnping.' + msg.job, Date.now()).catch(() => {});
+    // oln-store: the offscreen page's ONLY route to storage — offscreen
+    // documents get no chrome API beyond runtime messaging, so job records
+    // are written here on its behalf (and the message wakes this worker).
+    if (msg.scope === 'oln-store' && sender.id === chrome.runtime.id && typeof msg.key === 'string' && msg.key.startsWith('ext.oln')) {
+      stSet('local', msg.key, msg.val)
+        .then(() => sendResponse && sendResponse({ ok: true }))
+        .catch(() => sendResponse && sendResponse({ ok: false }));
+      return true;
+    }
     sendResponse && sendResponse({ ok: true });
     return false;
   }
