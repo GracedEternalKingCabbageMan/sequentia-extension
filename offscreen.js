@@ -1,4 +1,4 @@
-const OFFSCREEN_BUILD = '0.5.11';
+const OFFSCREEN_BUILD = '0.5.12';
 // Offscreen document: the home for LONG Lightning operations. A service
 // worker gets killed by idle clocks and task caps no keepalive fully
 // defeats; this is a real page with neither. The worker hands a job over,
@@ -265,13 +265,13 @@ async function runRest(job, p) {
     const sid = lr.session_id || lr.sessionId;
     const takerPubB64 = lr.taker_session_pubkey || lr.takerSessionPubkey;
     const takerPub = /^[0-9a-fA-F]{66}$/.test(String(takerPubB64)) ? String(takerPubB64) : b64d(takerPubB64);
-    // The courier's amounts are MSAT = atoms x 1000 (both directions).
-    let takeMsat = 0n; try { takeMsat = BigInt(String(lr.take_amount || lr.takeAmount || '0')); } catch {}
-    const takeReq = takeMsat / 1000n;
-    const take = takeReq > 0n && takeReq < state.remaining ? takeReq : state.remaining;
-    // Lifting my ASK the taker BUYS (floor); lifting my BID the taker SELLS (ceil).
-    const q = sell ? propFloor(state.quoteRemaining, take, state.remaining)
-                   : propCeil(state.quoteRemaining, take, state.remaining);
+    // The taker's PARTIAL slice arrives INSIDE the encrypted terms request (in
+    // courier msat = atoms x 1000); lift_requested.take_amount is the relay's
+    // whole-offer figure in ATOMS. Reading the slice from the wrong envelope
+    // sent nonsense terms on every build until now.
+    let take = state.remaining;
+    const q_of = (t) => (sell ? propFloor(state.quoteRemaining, t, state.remaining)
+                              : propCeil(state.quoteRemaining, t, state.remaining));
     const cr = await Crypter.fromECDH(mk, takerPub);
     const inbox = []; let wake = null;
     sessions.set(sid, (sm) => { inbox.push(sm); if (wake) { const w = wake; wake = null; w(); } });
@@ -290,7 +290,11 @@ async function runRest(job, p) {
     };
     const say = async (m) => send({ swap_msg: { session_id: sid, ciphertext: b64e(await cr.seal(teEnc.encode(JSON.stringify(m)))) } });
     try {
-      await recv('pln_terms_request', 90_000);
+      const req = await recv('pln_terms_request', 90_000);
+      let reqMsat = 0n; try { reqMsat = BigInt(String(req.seq_amount || 0)); } catch {}
+      const reqAtoms = reqMsat / 1000n;
+      if (reqAtoms > 0n && reqAtoms < state.remaining) take = reqAtoms;
+      const q = q_of(take);
       const inNodeId = sell ? provCounter.nodeId : provBase.nodeId;   // the leg the taker pays
       await say({ type: 'pln_terms', maker_ln_node_id: inNodeId, btc_amount: Number(q * 1000n), seq_amount: Number(take * 1000n) });
       const inv = await recv('pln_asset_invoice', 90_000);
