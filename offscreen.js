@@ -26,6 +26,19 @@ function progress(job, text) {
   chrome.runtime.sendMessage({ scope: 'oln-progress', job, text }).catch(() => {});
 }
 
+// Offscreen documents may use no chrome API beyond runtime messaging —
+// chrome.storage does not exist here (a first-line use of it silently killed
+// whole runs). Durable writes are relayed to the service worker, and each
+// relay message also wakes the worker.
+function store(key, val) {
+  return chrome.runtime.sendMessage({ scope: 'oln-store', key, val });
+}
+async function storeSure(key, val) {
+  for (let i = 0; i < 10; i++) {
+    try { await store(key, val); return; } catch { await new Promise((r) => setTimeout(r, 1000)); }
+  }
+}
+
 async function connectOwn(kind, phrase, label) {
   const prov = kind === 'BTC'
     ? await provisionAndConnect({
@@ -89,21 +102,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   sendResponse({ accepted: true });
   (async () => {
     const key = 'ext.olnjob.' + msg.job;
-    // A started record immediately: a vanished job must never read as "none".
-    await chrome.storage.local.set({ [key]: { done: false, started: true, at: Date.now() } });
+    // Overwrite the dispatcher's started record with proof this page ran.
+    await storeSure(key, { done: false, started: true, offscreen: true, at: Date.now() });
     // Liveness pings: each one wakes the service worker, and a live worker
     // retains this offscreen page (its death took the page — and the job —
     // with it in earlier runs). Also stamps a heartbeat for post-mortems.
     const pinger = setInterval(() => {
       chrome.runtime.sendMessage({ scope: 'oln-ping', job: msg.job }).catch(() => {});
-      chrome.storage.local.set({ ['ext.olnhb.' + msg.job]: Date.now() }).catch(() => {});
+      store('ext.olnhb.' + msg.job, Date.now()).catch(() => {});
     }, 15000);
     try {
       const result = await runSwap(msg.job, msg.params);
-      await chrome.storage.local.set({ [key]: { done: true, ok: true, result, at: Date.now() } });
+      await storeSure(key, { done: true, ok: true, result, at: Date.now() });
       progress(msg.job, 'Swap settled.');
     } catch (e) {
-      await chrome.storage.local.set({ [key]: { done: true, ok: false, error: String((e && e.message) ?? e), at: Date.now() } });
+      await storeSure(key, { done: true, ok: false, error: String((e && e.message) ?? e), at: Date.now() });
     } finally {
       clearInterval(pinger);
     }
