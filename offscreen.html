@@ -3,13 +3,14 @@
 <head><meta charset="utf-8"><title>Ambra worker</title></head>
 <body>
 <script type="module">
-  // Loader: import the engine with a version-busted URL. Brave caches
-  // chrome-extension:// resources across extension reloads, and a stale cached
-  // offscreen.js kept serving maker lifts with OUTDATED protocol semantics
-  // (seen live three builds in a row). The document itself is created with
-  // ?v=<version>, forwarded here, so both layers miss the cache.
+  // Loader: version-busted import (Brave caches chrome-extension:// scripts
+  // across reloads). Failures are reported through the job-record channel —
+  // an offscreen console is invisible, and a silent loader cost a build cycle.
   const v = new URLSearchParams(location.search).get('v') || Date.now();
-  import('./offscreen.js?v=' + encodeURIComponent(v));
+  import('./offscreen.js?v=' + encodeURIComponent(v)).catch((e) => {
+    chrome.runtime.sendMessage({ scope: 'oln-store', key: 'ext.olnjob.loader-err',
+      val: { done: true, ok: false, error: 'engine import failed: ' + String(e && e.message || e), at: Date.now() } }).catch(() => {});
+  });
 </script>
 </body>
 </html>
