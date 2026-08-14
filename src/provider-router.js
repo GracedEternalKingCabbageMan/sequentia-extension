@@ -115,7 +115,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         network: engine.getNetworkName(),
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexMarketOrder'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexMarketOrder', 'dexPlaceLimit'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -208,6 +208,14 @@ export async function handleDappRequest(origin, method, params = {}) {
       if (!/^[0-9a-f]{64}$/i.test(String(base || ''))) throw new Error('base must be a 32-byte hex asset id');
       const prep = await dex.prepareLnMarketOrder({ base: String(base).toLowerCase(), quote, side, baseAtoms });
       return requestApproval(origin, 'dexMarketOrder', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
+    }
+    case 'dexPlaceLimit': {
+      requireConnected(origin);
+      const { room = 'ln', base, quote, side, baseAtoms, limitQuoteAtoms } = params || {};
+      if (room !== 'ln') throw new Error("only room 'ln' supports wallet-served limit orders so far");
+      if (!/^[0-9a-f]{64}$/i.test(String(base || ''))) throw new Error('base must be a 32-byte hex asset id');
+      const prep = await dex.prepareLnLimitOrder({ base: String(base).toLowerCase(), quote, side, baseAtoms, limitQuoteAtoms });
+      return requestApproval(origin, 'dexPlaceLimit', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
     }
     case 'dexSwapLn': {
       // LNDEX taker swap: both legs over the user's own Lightning channels.

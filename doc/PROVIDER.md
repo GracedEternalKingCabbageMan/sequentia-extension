@@ -189,3 +189,21 @@ order while any slice settled.
 - `room`: `'ln'` (pure-Lightning book) — other rooms not yet served.
 - `base`: 32-byte hex asset id. `quote`: 32-byte hex or `'BTC'`.
 - `side`: `'buy' | 'sell'` of the base asset. `baseAtoms`: decimal string.
+
+## dexPlaceLimit
+
+`request({ method: 'dexPlaceLimit', params: { room, base, quote, side, baseAtoms, limitQuoteAtoms } })`
+
+Limit order, fill-then-rest. `limitQuoteAtoms` is the quote-side total for the
+whole `baseAtoms` (the exact integer price). Anything the book already crosses
+at your price or better fills immediately (same engine as a market order,
+bounded by the limit instead of slippage); the remainder RESTS on the book as
+a live offer served by the wallet itself: the wallet answers lifts, registers
+holds on its own node, pays the counter-leg, settles — the full maker
+choreography, atomically per fill. One approval covers both halves.
+
+Presence is honest: the resting offer lives while the wallet's engine lives
+(offers expire within the hour otherwise). Poll `dexJobResult` for state:
+`{ resting: true, remaining, filledAtoms, ... }` while resting, then a final
+`{ done: true, result: { rested, baseAtoms, quoteAtoms, fills } }` when fully
+matched.
