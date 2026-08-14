@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Sequentia Wallet",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Non-custodial dual-chain wallet for the Sequentia network and Bitcoin testnet4: balances, send and receive, Lightning, OpenAMP restricted assets, and website connections.",
   "action": {
     "default_popup": "popup/popup.html",

@@ -148,7 +148,22 @@ async function overview({ withLn = false } = {}) {
   const bal = await engine.balances();
   const heldSeq = Object.keys(bal.seq).filter((h) => BigInt(bal.seq[h] || 0) > 0n);
   let lnSum = { deployed: false, perKind: {} };
-  if (withLn) { try { lnSum = await ln.summary(Object.keys(bal.seq)); } catch {} }
+  if (withLn) {
+    // The LN summary needs LSP + node round trips that can take seconds (or
+    // hang on a cold LSP) — never make the balance card wait on it twice.
+    // Serve a fresh-enough cached summary instantly; refresh it when stale and
+    // fall back to the cache when the live read fails. storage.local survives
+    // worker restarts AND extension reloads, so the row no longer flickers away.
+    const cached = await stGet('local', 'ext.lnSum').catch(() => null);
+    if (cached && Date.now() - cached.at < 60_000) {
+      lnSum = cached.v;
+    } else {
+      try {
+        lnSum = await ln.summary(Object.keys(bal.seq));
+        await stSet('local', 'ext.lnSum', { v: lnSum, at: Date.now() });
+      } catch { if (cached) lnSum = cached.v; }
+    }
+  }
 
   const rows = [];
   const push = (key, onchainAtoms, alwaysShow) => {
