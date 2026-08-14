@@ -198,8 +198,25 @@ async function runRest(job, p) {
     filled: BigInt(pre.baseAtoms || '0'), quoteFilled: BigInt(pre.quoteAtoms || '0'),
     offerId: null, fills: (pre.slices || []).filter((x) => x.ok).map((x) => ({ crossing: true, ...x })),
   };
-  const ws = new WebSocket((BASE + '/seqob-pln').replace(/^http/, 'ws') + '/v1/ws');
-  const send = (o) => { try { ws.send(JSON.stringify(o)); } catch {} };
+  // The maker socket must never fall silent: an idle websocket gets closed by
+  // the front proxy within a minute and the relay then EVICTS the resting
+  // offer as unliftable (seen live on the first wallet-served offer). A cheap
+  // subscribe frame every 20s keeps it open; a drop reconnects and re-posts.
+  let ws = null, closed = false;
+  const send = (o) => { try { ws && ws.send(JSON.stringify(o)); } catch {} };
+  const keep = setInterval(() => {
+    send({ market_subscribe: { base_asset: p.base, quote_asset: p.counterKind === 'BTC' ? 'BTC' : p.counterKind } });
+  }, 20_000);
+  const connect = () => {
+    ws = new WebSocket((BASE + '/seqob-pln').replace(/^http/, 'ws') + '/v1/ws');
+    ws.onopen = () => { if (state.remaining > 0n) post(); };
+    ws.onmessage = onWsMessage;
+    ws.onclose = () => {
+      if (closed) return;
+      progress(job, 'Relay link dropped; re-resting your order…');
+      setTimeout(() => { if (!closed) connect(); }, 3000);
+    };
+  };
   const post = () => {
     const o = {
       offer_id: randHex(16), schema_version: 1,
@@ -286,6 +303,8 @@ async function runRest(job, p) {
       else {
         await storeSure(key, { done: true, ok: true, result: { rested: true, settled: true,
           baseAtoms: state.filled.toString(), quoteAtoms: state.quoteFilled.toString(), fills: state.fills }, at: Date.now() });
+        closed = true; clearInterval(keep); clearInterval(pinger);
+        chrome.runtime.sendMessage({ scope: 'oln-done', job }).catch(() => {});
         try { ws.close(); } catch {}
       }
     } catch (e) {
@@ -294,16 +313,16 @@ async function runRest(job, p) {
     } finally { sessions.delete(sid); }
   }
 
-  ws.onopen = () => post();
-  ws.onmessage = (ev) => {
+  const onWsMessage = (ev) => {
     let m; try { m = JSON.parse(typeof ev.data === 'string' ? ev.data : tdDec.decode(new Uint8Array(ev.data))); } catch { return; }
+    if (m.error) progress(job, 'Relay: ' + String(m.error.message || m.error).slice(0, 70));
     const lr = m.lift_requested || m.liftRequested;
     if (lr && String(lr.offer_id || lr.offerId) === String(state.offerId)) { serve(lr); return; }
     const sm = m.swap_msg || m.swapMsg;
     if (sm) { const h = sessions.get(sm.session_id || sm.sessionId); if (h) h(sm); }
   };
   const pinger = setInterval(() => { chrome.runtime.sendMessage({ scope: 'oln-ping', job }).catch(() => {}); }, 15000);
-  ws.onclose = () => clearInterval(pinger);
+  connect();
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
