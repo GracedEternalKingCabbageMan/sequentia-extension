@@ -564,6 +564,17 @@ async function ensureOffscreen() {
     reasons: ['WORKERS'],
     justification: 'Long-lived Lightning signer sessions outlive service worker limits',
   });
+  // The loader imports the engine asynchronously; dispatching before its
+  // listener exists dies with "receiving end does not exist". Wait for hello.
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      const r = await chrome.runtime.sendMessage({ scope: 'oln', op: 'hello' });
+      if (r && r.version === version) return;
+    } catch {}
+    if (Date.now() - t0 > 15_000) throw new Error('the wallet engine did not come up');
+    await new Promise((res) => setTimeout(res, 250));
+  }
 }
 
 export async function jobResult(jobId) {
