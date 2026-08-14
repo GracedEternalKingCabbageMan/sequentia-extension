@@ -1,5 +1,5 @@
 // Injected into every page's MAIN world: exposes window.sequentia, the
-// Sequentia wallet provider. Requests are relayed via window.postMessage to
+// Ambra (Sequentia network) wallet provider. Requests are relayed via window.postMessage to
 // the content script (isolated world), which forwards them to the extension.
 // Protocol: doc/PROVIDER.md.
 (() => {

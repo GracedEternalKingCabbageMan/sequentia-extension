@@ -1,4 +1,4 @@
-# Sequentia Wallet — browser extension
+# Ambra for Chromium — the Sequentia browser extension wallet
 
 A non-custodial Chromium (Manifest V3) extension wallet for the Sequentia
 network and Bitcoin testnet4, built on [SWK](https://github.com/GracedEternalKingCabbageMan/SWK)
