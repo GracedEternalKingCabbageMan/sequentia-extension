@@ -180,7 +180,9 @@ async function overview({ withLn = false } = {}) {
   // on the LNDEX, zero on-chain trace) — it must show like any other holding.
   for (const k of Object.keys(lnSum.perKind)) {
     if (k === 'BTC' || (k in bal.seq)) continue;
-    push(k, 0n, false);
+    // alwaysShow: a live channel whose balance sits under the channel reserve
+    // reads spendable 0, and hiding the row made real, settled funds invisible.
+    push(k, 0n, true);
   }
   for (const [id, atoms] of Object.entries(openamp.balancesMap())) push('oamp:' + id, atoms, false);
   rows.sort((a, b) => (a.key === 'BTC' ? -1 : b.key === 'BTC' ? 1 : (b.refVal || 0) - (a.refVal || 0)));
