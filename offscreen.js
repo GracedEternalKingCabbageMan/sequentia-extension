@@ -187,6 +187,12 @@ const propFloor = (whole, take, base) => (take >= base ? whole : (whole * take) 
 async function runRest(job, p) {
   const key = 'ext.olnjob.' + job;
   const mk = makerKeyFromSeed(await makerSeedHex(p.phrase, p.base + '/' + p.counterKind));
+  // The maker pubkey must ride INSIDE the signed lightning terms; extract it
+  // by signing a throwaway object (signOffer derives + sets it from the priv).
+  const _d = { offer_id: 'x', pair: { base_asset: 'x', quote_asset: 'x' } };
+  signOffer(_d, mk);
+  const makerPub = _d.maker_pubkey;
+  const hexB64 = (h) => { const b = []; for (let i = 0; i < h.length; i += 2) b.push(parseInt(h.slice(i, i + 2), 16)); return b64e(Uint8Array.from(b)); };
   const provBase = await connectOwn(p.base, p.phrase, p.baseTicker);
   const provCounter = await connectOwn(p.counterKind, p.phrase, p.counterTicker);
   await waitPatient(job, provBase.key, p.baseTicker);
@@ -233,11 +239,15 @@ async function runRest(job, p) {
       fee_asset_hint: '', min_anchor_depth: 0,
       maker_ln_node_pubkey: provBase.nodeId || '',
       ln_connect_hints: [], time_in_force: 'TIME_IN_FORCE_UNSPECIFIED', confidential: false,
-      lightning: { ln_direction: sell ? 3 : 2 },
+      lightning: { ln_direction: sell ? 3 : 2, maker_claim_pub: makerPub, maker_refund_pub: makerPub,
+        onchain_cltv: 240, maker_issues_hold_invoice: false, max_0conf_amount: '0' },
     };
     signOffer(o, mk);
     state.offerId = o.offer_id;
-    send({ offer_submit: o });
+    // Wire form: proto bytes fields travel as BASE64 (the signed object keeps
+    // the wallet's hex convention; only the submitted copy converts).
+    send({ offer_submit: { ...o, lightning: { ...o.lightning,
+      maker_claim_pub: hexB64(makerPub), maker_refund_pub: hexB64(makerPub) } } });
     progress(job, 'Resting ' + (sell ? 'ask' : 'bid') + ': ' + state.remaining + ' atoms on the book.');
     store(key, { done: false, resting: true, offerId: state.offerId,
       remaining: state.remaining.toString(), filledAtoms: state.filled.toString(),
