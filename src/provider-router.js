@@ -115,7 +115,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         network: engine.getNetworkName(),
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexMarketOrder'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -201,6 +201,14 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'dexFillOnchain', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
     }
 
+    case 'dexMarketOrder': {
+      requireConnected(origin);
+      const { room = 'ln', base, quote, side, baseAtoms } = params || {};
+      if (room !== 'ln') throw new Error("only room 'ln' supports market orders so far");
+      if (!/^[0-9a-f]{64}$/i.test(String(base || ''))) throw new Error('base must be a 32-byte hex asset id');
+      const prep = await dex.prepareLnMarketOrder({ base: String(base).toLowerCase(), quote, side, baseAtoms });
+      return requestApproval(origin, 'dexMarketOrder', { ...prep.display, text: origin + ' · ' + prep.display.text }, prep.exec);
+    }
     case 'dexSwapLn': {
       // LNDEX taker swap: both legs over the user's own Lightning channels.
       await requireConnected(origin);
