@@ -370,6 +370,94 @@ export async function prepareLnSwap({ base, quote, offerId, takeAtoms }) {
   return { display, exec };
 }
 
+
+// Market order on the pure-Lightning book: ONE approval, then the offscreen
+// engine walks the opposing resting orders best-first (the wallet plans the
+// slices here from the relay book — the site names only side + amount). A
+// slice that fails is skipped, never retried blind; the walk stops 5% past
+// the best price so a thin book cannot fill at cliff prices.
+export async function prepareLnMarketOrder({ base, quote, side, baseAtoms }) {
+  if (!(await engine.ensureOpen())) throw new Error('the wallet is locked');
+  if (side !== 'buy' && side !== 'sell') throw new Error("side must be 'buy' or 'sell'");
+  const want = big(baseAtoms);
+  if (want <= 0n) throw new Error('amount must be positive');
+  const q = quote || 'BTC';
+  const url = `${MOUNTS.ln}/v1/market/${encodeURIComponent(base)}/${encodeURIComponent(q)}/orderbook`;
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) throw new Error('order book unreachable (HTTP ' + r.status + ')');
+  const book = await r.json();
+  const now = Math.floor(Date.now() / 1000);
+  const opposing = (book.offers || []).filter((o) => {
+    const ld = o.lightning ? Number(o.lightning.ln_direction ?? -1) : -1;
+    if (ld !== 2 && ld !== 3) return false;
+    if (Number(o.expires_at_unix || 0) > 0 && Number(o.expires_at_unix) <= now) return false;
+    return side === 'buy' ? o.trade_dir === 'TRADE_DIR_SELL' : o.trade_dir === 'TRADE_DIR_BUY';
+  });
+  for (const o of opposing) seqob.normRelayOffer(o);
+  const priceOf = (o) => {
+    const makerBuys = o.trade_dir === 'TRADE_DIR_BUY';
+    const qa = big(makerBuys ? o.offer_amount : o.want_amount);
+    const ba = big(o.base_amount);
+    return ba > 0n ? Number(qa) / Number(ba) : Infinity;
+  };
+  opposing.sort((a, b) => (side === 'buy' ? priceOf(a) - priceOf(b) : priceOf(b) - priceOf(a)));
+  if (!opposing.length) throw new Error('no opposing resting orders on the pure-Lightning book');
+  const best = priceOf(opposing[0]);
+  const slices = [];
+  let remaining = want, totalQuote = 0n;
+  for (const o of opposing) {
+    if (remaining <= 0n) break;
+    const p = priceOf(o);
+    if (side === 'buy' ? p > best * 1.05 : p < best * 0.95) break;
+    const sq = plnSliceQuote(side, remaining < big(o.base_amount) ? remaining : big(o.base_amount),
+      o.base_amount, o.trade_dir === 'TRADE_DIR_BUY' ? o.offer_amount : o.want_amount);
+    if (!sq || sq.dust) continue;
+    slices.push({
+      offerId: o.offer_id, makerPubkey: o.maker_pubkey,
+      takeAtoms: sq.takeAtoms.toString(), quoteAtoms: sq.quoteAtoms.toString(),
+      takeAtomsNum: sq.whole ? null : Number(sq.takeAtoms),
+    });
+    remaining -= sq.takeAtoms; totalQuote += sq.quoteAtoms;
+  }
+  if (!slices.length) throw new Error('nothing fillable within the slippage bound');
+  const filled = want - remaining;
+  const bm = A.assetMeta(base);
+  const qm = q === 'BTC' ? { ticker: 'BTC', precision: 8 } : A.assetMeta(q);
+  const display = {
+    text: 'Market ' + side + ' on the LNDEX: walks the book across ' + slices.length + ' resting order' + (slices.length > 1 ? 's' : '') + '.',
+    deltas: side === 'buy'
+      ? [{ ticker: qm.ticker, atoms: '-' + totalQuote.toString(), precision: qm.precision || 0 },
+         { ticker: bm.ticker, atoms: filled.toString(), precision: bm.precision || 0 }]
+      : [{ ticker: bm.ticker, atoms: '-' + filled.toString(), precision: bm.precision || 0 },
+         { ticker: qm.ticker, atoms: totalQuote.toString(), precision: qm.precision || 0 }],
+    detail: (remaining > 0n ? 'The book covers ' + fmtAtoms(filled, bm.precision || 0) + ' ' + bm.ticker + ' of the requested amount within 5% of the best price; the rest is not placed. ' : '')
+      + 'Each slice settles atomically over Lightning; a failed slice is skipped.',
+  };
+  const exec = async () => {
+    const phrase = await sessionMnemonic();
+    if (!phrase) throw new Error('the wallet is locked');
+    await ensureOffscreen();
+    try {
+      const prev = (await stGet('local', 'ext.lnAssets')) || [];
+      const add = [base, q].filter((a) => /^[0-9a-f]{64}$/i.test(String(a || '')));
+      const next = [...new Set([...prev, ...add.map((a) => a.toLowerCase())])];
+      if (next.length !== prev.length) await stSet('local', 'ext.lnAssets', next);
+    } catch {}
+    const job = 'oln' + Date.now() + Math.random().toString(36).slice(2, 8);
+    await chrome.storage.local.set({ ['ext.olnjob.' + job]: { done: false, started: true, at: Date.now() } });
+    await chrome.runtime.sendMessage({
+      scope: 'oln', op: 'market', job,
+      params: {
+        phrase, side, base, counterKind: q === 'BTC' ? 'BTC' : q,
+        baseTicker: bm.ticker, counterTicker: qm.ticker,
+        basePrecision: bm.precision || 0, slices,
+      },
+    });
+    return { jobId: job, pending: true, slices: slices.length };
+  };
+  return { display, exec };
+}
+
 async function ensureOffscreen() {
   // REUSE a live document whenever it answers the hello handshake with the
   // current build version: the document holds the warm Lightning signer wss

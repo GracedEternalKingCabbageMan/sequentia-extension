@@ -166,6 +166,51 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // signer wss links warm across swaps) only when it answers with the current
   // version; a stale or dead doc gets recreated instead.
   if (msg.op === 'hello') { sendResponse({ version: chrome.runtime.getManifest().version }); return false; }
+  // Market walk: sequential slices through the same runSwap engine; one job
+  // record aggregates the outcome (a page that lost its jobId still recovers).
+  if (msg.op === 'market') {
+    sendResponse({ accepted: true });
+    (async () => {
+      const key = 'ext.olnjob.' + msg.job;
+      await storeSure(key, { done: false, started: true, offscreen: true, market: true, at: Date.now() });
+      const pinger = setInterval(() => {
+        chrome.runtime.sendMessage({ scope: 'oln-ping', job: msg.job }).catch(() => {});
+      }, 15000);
+      const p = msg.params;
+      const done = [];
+      let filled = 0n, quoteTotal = 0n;
+      try {
+        for (let i = 0; i < p.slices.length; i++) {
+          const s = p.slices[i];
+          progress(msg.job, 'Market order: slice ' + (i + 1) + ' of ' + p.slices.length + '…');
+          const marks = [];
+          try {
+            const r = await runSwap(msg.job, {
+              phrase: p.phrase, base: p.base, counterKind: p.counterKind, side: p.side,
+              baseTicker: p.baseTicker, counterTicker: p.counterTicker,
+              recvAtoms: p.side === 'buy' ? s.takeAtoms : s.quoteAtoms,
+              amountUnits: Number(s.takeAtoms) / Math.pow(10, p.basePrecision || 0),
+              offerId: s.offerId, makerPubkey: s.makerPubkey,
+              takeAtomsNum: s.takeAtomsNum, takeAtoms: s.takeAtoms, quoteAtoms: s.quoteAtoms,
+            }, marks);
+            filled += BigInt(r.baseAtoms || s.takeAtoms);
+            quoteTotal += BigInt(r.quoteAtoms || s.quoteAtoms);
+            done.push({ ok: true, offerId: s.offerId, baseAtoms: String(r.baseAtoms || s.takeAtoms), quoteAtoms: String(r.quoteAtoms || s.quoteAtoms) });
+          } catch (e) {
+            done.push({ ok: false, offerId: s.offerId, error: String((e && e.message) ?? e) });
+          }
+        }
+        await storeSure(key, {
+          done: true, ok: done.some((d) => d.ok),
+          result: { settled: done.some((d) => d.ok), market: true, baseAtoms: filled.toString(), quoteAtoms: quoteTotal.toString(), slices: done },
+          at: Date.now(),
+        });
+        progress(msg.job, 'Market order finished.');
+      } finally { clearInterval(pinger); }
+      chrome.runtime.sendMessage({ scope: 'oln-done', job: msg.job }).catch(() => {});
+    })();
+    return false;
+  }
   if (msg.op !== 'swap') return;
   sendResponse({ accepted: true });
   (async () => {
