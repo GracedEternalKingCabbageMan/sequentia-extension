@@ -2,15 +2,6 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>Ambra worker</title></head>
 <body>
-<script type="module">
-  // Loader: version-busted import (Brave caches chrome-extension:// scripts
-  // across reloads). Failures are reported through the job-record channel —
-  // an offscreen console is invisible, and a silent loader cost a build cycle.
-  const v = new URLSearchParams(location.search).get('v') || Date.now();
-  import('./offscreen.js?v=' + encodeURIComponent(v)).catch((e) => {
-    chrome.runtime.sendMessage({ scope: 'oln-store', key: 'ext.olnjob.loader-err',
-      val: { done: true, ok: false, error: 'engine import failed: ' + String(e && e.message || e), at: Date.now() } }).catch(() => {});
-  });
-</script>
+<script type="module" src="offscreen-boot.js"></script>
 </body>
 </html>
