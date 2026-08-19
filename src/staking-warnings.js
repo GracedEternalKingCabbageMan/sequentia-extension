@@ -23,7 +23,12 @@ export function delegationWarnings(record, board) {
     out.push('This pool is not on the board right now, so what it has committed to cannot be shown. Leaving always works.');
     return out;
   }
-  if (!pool.policy_in_force) {
+  if (pool.declared === false) {
+    // Delegating to a plain staker is allowed and the chain will not stop it,
+    // but the wallet should not let anyone believe they joined a pool.
+    out.push('This signer has not declared itself a pool: it has committed to no payout policy and never asked '
+      + 'for delegations. It keeps everything its blocks earn, and nothing on-chain obliges it to pay you.');
+  } else if (!pool.policy_in_force) {
     out.push('This pool has committed to no payout policy, so by default it keeps everything its blocks earn. Nothing on-chain obliges it to pay you.');
   } else if (pool.policy_in_force.mode === 'direct') {
     out.push('This pool pays a committed address. The chain stops it redirecting the reward silently, but does not check that address shares anything with you.');
