@@ -13,6 +13,7 @@ import './src/shim.js';
 import * as engine from './src/engine.js';
 import * as A from './src/assets.js';
 import * as openamp from './src/openamp.js';
+import * as staking from './src/staking.js';
 import * as ln from './src/ln.js';
 import * as dex from './src/dex.js';
 import * as perms from './src/permissions.js';
@@ -283,6 +284,42 @@ const uiMethods = {
   'oampReceive': async ({ assetId }) => {
     const address = await openamp.depositAddress(assetId);
     return { aid: openamp.aid(), address, qr: address ? engine.qrFor(address) : null, aidQr: engine.qrFor(openamp.aid()) };
+  },
+  // --- staking pools -------------------------------------------------------
+  // Delegation only: lend the weight this wallet's staking key already carries,
+  // move it, take it back. Registering a stake locks coins for an unbonding
+  // period and running a pool means being online with the signing key on the
+  // machine producing blocks, so neither is offered from a browser popup.
+  'stakingOverview': async () => {
+    await engine.ensureOpen();
+    if (!staking.supported()) return { supported: false };
+    // The board is advisory. Leaving must work whether or not it answers, so a
+    // board failure is reported rather than allowed to fail the whole call.
+    let board = null, boardError = null;
+    try { board = await staking.fetchPools(); }
+    catch (e) { boardError = String((e && e.message) ?? e); }
+    const delegation = await staking.findDelegation().catch(() => null);
+    return {
+      supported: true,
+      board,
+      boardError,
+      delegation: delegation && { ...delegation, atoms: delegation.atoms.toString() },
+      warnings: staking.warnings(delegation, board),
+      stakerKey: engine.getSigner().stakerPublicKey(),
+    };
+  },
+  'stakingDelegate': async ({ signer }) => {
+    await engine.ensureOpen();
+    const pset = await staking.buildDelegate(signer);
+    const signed = await engine.signPset(pset);
+    return await engine.broadcastRaw({ psetB64: signed });
+  },
+  'stakingSpend': async ({ rotateTo }) => {
+    await engine.ensureOpen();
+    const record = await staking.findDelegation();
+    const built = await staking.buildSpend(record, rotateTo || null);
+    const { txid } = await engine.broadcastRaw({ hex: built.rawHex });
+    return { txid, repointed: built.repointed };
   },
   'prepareSend': prepareSend,
   'confirmSend': confirmSend,
