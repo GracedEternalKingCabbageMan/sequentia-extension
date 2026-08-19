@@ -75,6 +75,7 @@
       <button data-tab="balance" class="on">Balance</button>
       <button data-tab="send">Send</button>
       <button data-tab="receive">Receive</button>
+      <button data-tab="stake">Stake</button>
       <button data-tab="history">History</button>
       <button data-tab="settings">Settings</button>
     </div>
@@ -147,6 +148,25 @@
         <select id="oampRecvAsset"></select>
         <div id="oampRecvAddr" class="addr hide"></div>
         <img id="oampRecvQr" class="qr hide" alt="">
+      </div>
+    </div>
+
+    <!-- stake: delegation only -->
+    <div id="tStake" class="hide">
+      <div class="card">
+        <h2>Staking pool</h2>
+        <p class="sub">Lend your stake's weight to a pool so it produces blocks for you. Your coins never move and the pool can never spend them: it is lent only the right to sign with your weight. You can take that back at any moment, without asking anyone.</p>
+        <div id="stakeUnsupported" class="status hide"></div>
+        <div id="stakeWarnings"></div>
+        <div class="sub" id="stakeStatus">…</div>
+        <div id="stakePools" style="margin-top:10px"></div>
+        <input id="stakeSigner" placeholder="or paste a pool signer key (66 hex characters)" class="mono">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <button id="btnDelegate" class="primary">Delegate</button>
+          <button id="btnLeavePool" class="ghost hide">Leave this pool</button>
+        </div>
+        <div class="status" id="stakeMsg"></div>
+        <p class="sub" style="margin-top:10px">Staking itself, and running a pool, are done from the desktop node wallet: both need a key online on the machine that produces blocks.</p>
       </div>
     </div>
 

@@ -27,7 +27,7 @@ const looksLikeBolt11 = (s) => /^ln(bc|tb|tbs|ert|sq|tsq)[0-9a-z]+$/i.test((s ||
 const VIEWS = ['vBoot', 'vWelcome', 'vCreate', 'vImport', 'vUnlock', 'vApp'];
 function view(id) { for (const v of VIEWS) $(v).classList.toggle('hide', v !== id); }
 
-const TABS = ['balance', 'send', 'receive', 'history', 'settings'];
+const TABS = ['balance', 'send', 'receive', 'stake', 'history', 'settings'];
 function tab(name) {
   for (const t of TABS) $('t' + t[0].toUpperCase() + t.slice(1)).classList.toggle('hide', t !== name);
   for (const b of document.querySelectorAll('.tabs [data-tab]')) b.classList.toggle('on', b.dataset.tab === name);
@@ -35,6 +35,7 @@ function tab(name) {
   if (name === 'history') renderHistory();
   if (name === 'settings') renderSettings();
   if (name === 'send') fillSendSelectors();
+  if (name === 'stake') renderStake();
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => tab(b.dataset.tab);
 
@@ -527,3 +528,130 @@ $('btnReveal').onclick = async () => {
 };
 
 boot().catch((e) => { view('vBoot'); $('vBoot').textContent = 'Failed to start: ' + e.message; });
+
+
+// ---- staking pools (delegation only) ----------------------------------------
+// Delegating lends the weight this wallet's staking key already carries. The
+// coins never move, the pool can never spend them, and only this wallet can end
+// the delegation. That last property is why "Leave" is never gated on the pool
+// board being reachable: leaving has to work at all times.
+let STAKE = null;          // last stakingOverview snapshot
+let STAKE_SEL = null;      // the pool row the user picked
+
+function stakeShare(p, total) {
+  if (!total) return '';
+  return ` · ${(Number(p.weight) / total * 100).toFixed(1)}% of the network`;
+}
+
+async function renderStake() {
+  $('stakeMsg').textContent = '';
+  try { STAKE = await rpc('stakingOverview'); }
+  catch (e) { $('stakeStatus').textContent = 'Could not read staking status: ' + e.message; return; }
+
+  const unsupported = $('stakeUnsupported');
+  if (!STAKE.supported) {
+    // Never offer joining a pool that this build could not leave.
+    unsupported.textContent = 'This build cannot spend a delegation record, so it does not offer delegating either. Update the extension.';
+    unsupported.classList.remove('hide');
+    $('stakePools').innerHTML = '';
+    $('stakeStatus').textContent = '';
+    $('btnDelegate').disabled = true;
+    $('btnLeavePool').classList.add('hide');
+    return;
+  }
+  unsupported.classList.add('hide');
+  $('btnDelegate').disabled = false;
+
+  const d = STAKE.delegation;
+  $('stakeStatus').textContent = !d
+    ? 'Not delegating. Your stake signs for itself, so it only earns while a node of yours is producing blocks.'
+    : (d.confirmed
+        ? `Delegated to ${d.signer.slice(0, 16)}… · ${fmtAtoms(d.atoms, 8)} tSEQ held in the record`
+        : 'Delegation sent, waiting to confirm. Until it does, your weight still counts for you.');
+  $('btnLeavePool').classList.toggle('hide', !d);
+  $('btnDelegate').textContent = d ? 'Move to the selected pool' : 'Delegate';
+
+  const warn = $('stakeWarnings');
+  warn.innerHTML = '';
+  for (const w of (STAKE.warnings || [])) {
+    const box = el('div', 'status', '⚠ ' + w);
+    box.style.marginBottom = '6px';
+    warn.appendChild(box);
+  }
+
+  const list = $('stakePools');
+  list.innerHTML = '';
+  const board = STAKE.board;
+  if (!board) {
+    // Advisory only: leaving still works, and the copy has to say so rather
+    // than leave someone thinking they are stuck.
+    list.appendChild(el('div', 'sub', 'Pool list unavailable right now'
+      + (STAKE.boardError ? ` (${STAKE.boardError})` : '') + '. Leaving a pool always works.'));
+    return;
+  }
+  const total = Number(board.network_weight) || 0;
+  for (const p of board.pools) {
+    const row = el('div', 'card');
+    row.style.cssText = 'cursor:pointer;padding:8px 10px;margin-bottom:6px';
+    if (STAKE_SEL === p.signer || (d && d.signer === p.signer)) row.style.outline = '1px solid var(--gold,#f5b301)';
+    row.appendChild(el('div', 'mono', p.signer.slice(0, 16) + '…'));
+    const rel = p.reliability === undefined ? 'no blocks owed yet'
+      : `produces ${p.reliability.toFixed(2)} of its share`;
+    row.appendChild(el('div', 'sub',
+      `${fmtAtoms(p.weight, 8)} tSEQ${stakeShare(p, total)} · ${p.delegators} delegator(s) · ${rel}`));
+    row.appendChild(el('div', 'sub', p.payout || ''));
+    if ((p.policy_pending || []).length) {
+      const w = el('div', 'sub', `⚠ has announced a payout change binding in ${p.policy_pending[0].blocks_away} blocks`);
+      w.style.color = '#f5b301';
+      row.appendChild(w);
+    }
+    if (p.eligible === false) {
+      const w = el('div', 'sub', 'below the network minimum stake, so it cannot produce yet');
+      w.style.color = '#e88';
+      row.appendChild(w);
+    }
+    row.onclick = () => { STAKE_SEL = p.signer; $('stakeSigner').value = p.signer; renderStake(); };
+    list.appendChild(row);
+  }
+}
+
+$('btnDelegate').onclick = async () => {
+  const msg = $('stakeMsg');
+  msg.textContent = '';
+  const target = ($('stakeSigner').value || '').trim().toLowerCase() || STAKE_SEL;
+  if (!target) { msg.textContent = 'Pick a pool, or paste its signer key.'; return; }
+  const moving = !!(STAKE && STAKE.delegation);
+  const ok = confirm(
+    (moving ? 'Move your stake\'s block-signing rights to:\n\n' : 'Delegate your stake\'s block-signing rights to:\n\n')
+    + target + '\n\n'
+    + 'Your coins do NOT move, and this pool can never spend them: only this wallet can. '
+    + 'You can take the rights back at any time, immediately, without the pool\'s cooperation.\n\n'
+    + 'What you are trusting it for is the reward: check what it has committed to paying.');
+  if (!ok) return;
+  $('btnDelegate').disabled = true;
+  try {
+    const r = moving ? await rpc('stakingSpend', { rotateTo: target })
+                     : await rpc('stakingDelegate', { signer: target });
+    msg.textContent = (moving ? 'Moving pool · ' : 'Delegated · ') + String(r.txid).slice(0, 16) + '…';
+    $('stakeSigner').value = ''; STAKE_SEL = null;
+    await renderStake();
+  } catch (e) { msg.textContent = 'Failed: ' + e.message; }
+  finally { $('btnDelegate').disabled = false; }
+};
+
+$('btnLeavePool').onclick = async () => {
+  const msg = $('stakeMsg');
+  msg.textContent = '';
+  const ok = confirm(
+    'Take your stake back?\n\n'
+    + 'Your weight counts for you again from the next confirmation, and the pool loses it.\n\n'
+    + 'This does NOT unstake: your coins were never moved by delegating and are not moved now.');
+  if (!ok) return;
+  $('btnLeavePool').disabled = true;
+  try {
+    const r = await rpc('stakingSpend', { rotateTo: null });
+    msg.textContent = 'Left the pool · ' + String(r.txid).slice(0, 16) + '…';
+    await renderStake();
+  } catch (e) { msg.textContent = 'Failed: ' + e.message; }
+  finally { $('btnLeavePool').disabled = false; }
+};
