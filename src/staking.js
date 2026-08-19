@@ -60,32 +60,104 @@ export async function fetchPools() {
   return j;
 }
 
+/// Signers worth probing for a record of ours, beyond whatever the wallet's own
+/// history turns up: every pool on the board, plus any signer this device has
+/// delegated to before.
+///
+/// The remembered set is a HINT, never a source of truth. It exists because a
+/// pool that commands no weight and has announced no policy does not appear on
+/// the board at all, and a wallet that pasted such a key would otherwise have no
+/// way to name it again.
+const HINT_KEY = 'seq.staking.signerHints';
+
+async function loadHints() {
+  try { return (await chrome.storage.local.get(HINT_KEY))[HINT_KEY] || []; }
+  catch { return []; }
+}
+
+async function rememberSigner(signer) {
+  try {
+    const seen = await loadHints();
+    if (seen.includes(signer)) return;
+    // Bounded: this is a lookup hint, not a history.
+    await chrome.storage.local.set({ [HINT_KEY]: [signer, ...seen].slice(0, 20) });
+  } catch { /* a hint that cannot be stored simply is not used */ }
+}
+
+async function probeSigners(board) {
+  const out = new Set(await loadHints());
+  for (const p of (board && board.pools) || []) out.add(p.signer);
+  return [...out];
+}
+
+/// The Electrum-style scripthash this explorer indexes by.
+///
+/// It is the FORWARD sha256 of the scriptPubKey, verified against the deployed
+/// esplora rather than assumed: the reversed form is the more common convention
+/// and returns an empty list here, which would look exactly like "you are not
+/// delegating" -- the worst possible wrong answer for a feature whose whole
+/// promise is that you can always leave.
+async function scriptHash(scriptHex) {
+  const bytes = Uint8Array.from(scriptHex.match(/../g).map((b) => parseInt(b, 16)));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 /// This wallet's live delegation record, or null.
 ///
-/// The record is a bare script, so the wallet does not hold it as one of its own
-/// coins and a restored seed has no local note of it. But the transaction that
-/// FUNDED it spent this wallet's coins and is therefore in its history: scan
-/// those outputs for a record naming this wallet's staking key, then ask the
-/// explorer whether it is still unspent. That last question is the one the
-/// wallet cannot answer itself, because a transaction spending a bare script
-/// need not touch this wallet at all and may never be downloaded.
-export async function findDelegation() {
+/// Two ways of looking, because neither alone is enough:
+///
+///  * the wallet's own history finds the record it FUNDED, since that
+///    transaction spent this wallet's coins. It cannot find one created by a
+///    MOVE: that transaction spends only the old bare record and pays only the
+///    new one, so nothing in it belongs to this wallet and no scan will ever
+///    download it.
+///  * asking the explorer for unspent outputs at the record script for each
+///    candidate signer finds it whatever created it, and survives a restore onto
+///    a device that has never seen any of this.
+///
+/// The record is a bare script, so the wallet cannot answer either question by
+/// itself.
+export async function findDelegation(board) {
   if (!supported()) return null;
   const controller = getSigner().stakerPublicKey();
-  const wollet = getWollet();
-  const candidates = [];
-  for (const wtx of wollet.transactions()) {
-    let hex;
-    try { hex = wtx.tx().toString(); } catch { continue; }
-    let found;
-    try { found = lwk.findDelegationRecords(hex, controller); } catch { continue; }
-    for (const f of found || []) {
-      candidates.push({
-        txid: wtx.txid().toString(), vout: f.vout, signer: f.signer,
-        atoms: BigInt(f.value), height: wtx.height(),
-      });
+  const byOutpoint = new Map();
+  const key = (c) => `${c.txid}:${c.vout}`;
+
+  // 1) What this wallet funded itself.
+  try {
+    for (const wtx of getWollet().transactions()) {
+      let hex;
+      try { hex = wtx.tx().toString(); } catch { continue; }
+      let found;
+      try { found = lwk.findDelegationRecords(hex, controller); } catch { continue; }
+      for (const f of found || []) {
+        const c = { txid: wtx.txid().toString(), vout: f.vout, signer: f.signer,
+                    atoms: BigInt(f.value), height: wtx.height(), fromHistory: true };
+        byOutpoint.set(key(c), c);
+      }
     }
+  } catch { /* an unreadable history must not stop the explorer probe */ }
+
+  // 2) What is out there under our controller, whoever created it. These come
+  //    back already filtered to UNSPENT, which is the question that matters.
+  for (const signer of await probeSigners(board)) {
+    let spk;
+    try { spk = lwk.sequentiaDelegationScript(controller, signer); } catch { continue; }
+    try {
+      const h = await scriptHash(spk);
+      const r = await fetch(`${ESPLORA}/scripthash/${h}/utxo`);
+      if (!r.ok) continue;
+      for (const u of await r.json()) {
+        const c = { txid: u.txid, vout: u.vout, signer, atoms: BigInt(u.value),
+                    height: u.status && u.status.confirmed ? u.status.block_height : null,
+                    unspent: true };
+        byOutpoint.set(key(c), c);
+      }
+    } catch { /* transient: the other signers still get their turn */ }
   }
+
+  const candidates = [...byOutpoint.values()];
   if (!candidates.length) return null;
   // Unconfirmed first (it is the most recent thing that happened), then by
   // height descending: a move spends the old record and creates a new one, so
@@ -98,11 +170,17 @@ export async function findDelegation() {
   });
   for (const c of candidates) {
     try {
-      const r = await fetch(`${ESPLORA}/tx/${c.txid}/outspend/${c.vout}`);
-      if (!r.ok) continue;
-      if ((await r.json())?.spent) continue;    // superseded, or already reclaimed
-      const st = await fetch(`${ESPLORA}/tx/${c.txid}/status`);
-      c.confirmed = st.ok ? !!(await st.json()).confirmed : false;
+      if (!c.unspent) {
+        const r = await fetch(`${ESPLORA}/tx/${c.txid}/outspend/${c.vout}`);
+        if (!r.ok) continue;
+        if ((await r.json())?.spent) continue;   // superseded, or already reclaimed
+      }
+      if (c.height == null) {
+        const st = await fetch(`${ESPLORA}/tx/${c.txid}/status`);
+        c.confirmed = st.ok ? !!(await st.json()).confirmed : false;
+      } else {
+        c.confirmed = true;
+      }
       return c;
     } catch { /* transient: try the next candidate */ }
   }
@@ -139,6 +217,7 @@ export async function buildDelegate(signerPubkey) {
   if (target === controller) {
     throw new Error('that is this wallet\'s own staking key; delegating to yourself is what already happens with no pool at all');
   }
+  await rememberSigner(target);
   return withWollet(async () => {
     const pset = getNetwork().txBuilder()
       .addDelegationOutput(controller, target, RECORD_ATOMS)
@@ -167,6 +246,7 @@ export async function buildSpend(record, rotateTo) {
   // wallet, unblinded, because the record spend creates an explicit output.
   const reclaim = target ? undefined
     : getWollet().address(undefined).address().toUnconfidential().toString();
+  if (target) await rememberSigner(target);
   const built = lwk.buildDelegationSpendTx({
     mnemonic: getMnemonic(),
     recordTxid: record.txid,
