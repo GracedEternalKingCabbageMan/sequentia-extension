@@ -298,7 +298,7 @@ const uiMethods = {
     let board = null, boardError = null;
     try { board = await staking.fetchPools(); }
     catch (e) { boardError = String((e && e.message) ?? e); }
-    const delegation = await staking.findDelegation().catch(() => null);
+    const delegation = await staking.findDelegation(board).catch(() => null);
     return {
       supported: true,
       board,
@@ -316,7 +316,11 @@ const uiMethods = {
   },
   'stakingSpend': async ({ rotateTo }) => {
     await engine.ensureOpen();
-    const record = await staking.findDelegation();
+    // Pass the board so a record created by a MOVE (which touches nothing this
+    // wallet owns) is still found.
+    let board = null;
+    try { board = await staking.fetchPools(); } catch {}
+    const record = await staking.findDelegation(board);
     const built = await staking.buildSpend(record, rotateTo || null);
     const { txid } = await engine.broadcastRaw({ hex: built.rawHex });
     return { txid, repointed: built.repointed };
