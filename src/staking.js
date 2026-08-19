@@ -84,10 +84,21 @@ async function rememberSigner(signer) {
   } catch { /* a hint that cannot be stored simply is not used */ }
 }
 
-async function probeSigners(board) {
-  const out = new Set(await loadHints());
-  for (const p of (board && board.pools) || []) out.add(p.signer);
-  return [...out];
+/// Two groups, tried in order: the signers this device has used, then the rest
+/// of the board.
+///
+/// The first group is one or two keys and hits immediately in the ordinary case,
+/// where the whole sweep would cost one request per pool on every refresh. The
+/// second exists for the case the first cannot cover: a seed restored onto a
+/// device that remembers nothing.
+async function probeGroups(board) {
+  const hints = await loadHints();
+  const seen = new Set(hints);
+  const rest = [];
+  for (const p of (board && board.pools) || []) {
+    if (!seen.has(p.signer)) { seen.add(p.signer); rest.push(p.signer); }
+  }
+  return [hints, rest];
 }
 
 /// The Electrum-style scripthash this explorer indexes by.
@@ -141,20 +152,30 @@ export async function findDelegation(board) {
 
   // 2) What is out there under our controller, whoever created it. These come
   //    back already filtered to UNSPENT, which is the question that matters.
-  for (const signer of await probeSigners(board)) {
-    let spk;
-    try { spk = lwk.sequentiaDelegationScript(controller, signer); } catch { continue; }
-    try {
-      const h = await scriptHash(spk);
-      const r = await fetch(`${ESPLORA}/scripthash/${h}/utxo`);
-      if (!r.ok) continue;
-      for (const u of await r.json()) {
-        const c = { txid: u.txid, vout: u.vout, signer, atoms: BigInt(u.value),
-                    height: u.status && u.status.confirmed ? u.status.block_height : null,
-                    unspent: true };
-        byOutpoint.set(key(c), c);
-      }
-    } catch { /* transient: the other signers still get their turn */ }
+  //    The second group is only swept when the first found nothing, so the
+  //    ordinary case costs one request rather than one per pool.
+  let probed = 0;
+  for (const group of await probeGroups(board)) {
+    // Skip the wider sweep only when an EARLIER PROBE found something. Keying
+    // this off byOutpoint would skip it whenever the history pass found the
+    // record this wallet funded -- exactly the record a later move has spent.
+    if (probed) break;
+    for (const signer of group) {
+      let spk;
+      try { spk = lwk.sequentiaDelegationScript(controller, signer); } catch { continue; }
+      try {
+        const h = await scriptHash(spk);
+        const r = await fetch(`${ESPLORA}/scripthash/${h}/utxo`);
+        if (!r.ok) continue;
+        for (const u of await r.json()) {
+          const c = { txid: u.txid, vout: u.vout, signer, atoms: BigInt(u.value),
+                      height: u.status && u.status.confirmed ? u.status.block_height : null,
+                      unspent: true };
+          byOutpoint.set(key(c), c);
+          probed++;
+        }
+      } catch { /* transient: the other signers still get their turn */ }
+    }
   }
 
   const candidates = [...byOutpoint.values()];
