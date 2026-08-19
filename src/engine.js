@@ -532,6 +532,24 @@ export function signMessage(message) {
   if (!signer) throw new Error('wallet is locked');
   return signer.signMessage(message);
 }
+// The wallet's Sequentia staking identity: the key at m/2/0 that a stake is
+// bonded to, and the only key that can ever unbond it. `signMessage` above
+// signs with the MASTER key, which is a different key and proves nothing about
+// a stake -- so anything asking "do you own this stake" needs this one.
+export function stakerPublicKey() {
+  if (!signer) throw new Error('wallet is locked');
+  if (typeof signer.stakerPublicKey !== 'function') {
+    throw new Error('this wallet build has no Sequentia staking key');
+  }
+  return signer.stakerPublicKey();
+}
+export function signStakerMessage(message) {
+  if (!signer) throw new Error('wallet is locked');
+  if (typeof signer.signMessageWithStakerKey !== 'function') {
+    throw new Error('this wallet build cannot sign with the staking key; update the extension');
+  }
+  return signer.signMessageWithStakerKey(message);
+}
 export async function broadcastRaw({ chain, hex, psetB64 }) {
   if (chain === 'bitcoin') return { txid: String(await btcW.broadcast(hex)) };
   if (psetB64) {

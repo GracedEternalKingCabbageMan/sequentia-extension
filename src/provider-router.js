@@ -114,7 +114,8 @@ export async function handleDappRequest(origin, method, params = {}) {
         version: chrome.runtime.getManifest().version,
         network: engine.getNetworkName(),
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
-          'signPset', 'signMessage', 'broadcast', 'createInvoice', 'payInvoice',
+          'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
+          'broadcast', 'createInvoice', 'payInvoice',
           'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexMarketOrder', 'dexPlaceLimit'],
         events: ['accountsChanged', 'disconnect'],
       };
@@ -263,6 +264,31 @@ export async function handleDappRequest(origin, method, params = {}) {
         text: origin + ' asks you to sign a message.',
         message,
       }, async () => { await ensureOpenOrThrow(); return { signature: engine.signMessage(message) }; });
+    }
+
+    case 'getStakerPublicKey': {
+      await requireUnlockedAndConnected(origin);
+      return { staker_pubkey: engine.stakerPublicKey() };
+    }
+
+    case 'signStakerMessage': {
+      // A signature under the STAKING key (m/2/0), in the same base64 form
+      // `signMessage` returns. It proves control of the key a stake is bonded
+      // to, which a master-key signature cannot. It authorises no payment and
+      // cannot move a stake: only a transaction can do either.
+      await requireConnected(origin);
+      const message = String(params.message ?? '');
+      if (!message) throw new Error('message is required');
+      return requestApproval(origin, 'signStakerMessage', {
+        text: origin + ' asks you to prove you control your staking key.',
+        message,
+      }, async () => {
+        await ensureOpenOrThrow();
+        return {
+          signature: engine.signStakerMessage(message),
+          staker_pubkey: engine.stakerPublicKey(),
+        };
+      });
     }
 
     case 'signPset': {
