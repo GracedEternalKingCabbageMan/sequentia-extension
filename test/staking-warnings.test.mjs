@@ -38,6 +38,13 @@ test('direct mode does not claim a fairness the chain does not enforce', () => {
   assert.ok(w.some((s) => s.includes('does not check that address shares anything with you')));
 });
 
+test('a split policy states its one sharp edge: claim before leaving', () => {
+  const w = delegationWarnings(record(),
+    board({ policy_in_force: { mode: 'split', activation: 1, commission_bp: 200 } }));
+  assert.ok(w.some((s) => s.includes('claim your rewards before you leave')),
+    'leaving a split pool forfeits unclaimed accruals, and the wallet must say so');
+});
+
 test('a lottery policy in force is not warned about', () => {
   const w = delegationWarnings(record(),
     board({ policy_in_force: { mode: 'lottery', activation: 1, commission_bp: 500 } }));
