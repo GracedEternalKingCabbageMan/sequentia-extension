@@ -589,8 +589,18 @@ async function renderStake() {
       + (STAKE.boardError ? ` (${STAKE.boardError})` : '') + '. Leaving a pool always works.'));
     return;
   }
+  // Only signers that DECLARED themselves a pool are offered. The feed carries
+  // every staker so the card can describe whichever one this wallet is lent to,
+  // but a staker producing for itself never asked for delegations.
+  const offered = board.pools.filter((p) => p.declared !== false);
+  if (!offered.length) {
+    list.appendChild(el('div', 'sub', 'No pool has declared itself yet. '
+      + `${board.stakers || 0} signer(s) are producing blocks for themselves; a staker becomes a pool by `
+      + 'committing a payout policy on-chain, and appears here when it does.'));
+    return;
+  }
   const total = Number(board.network_weight) || 0;
-  for (const p of board.pools) {
+  for (const p of offered) {
     const row = el('div', 'card');
     row.style.cssText = 'cursor:pointer;padding:8px 10px;margin-bottom:6px';
     if (STAKE_SEL === p.signer || (d && d.signer === p.signer)) row.style.outline = '1px solid var(--gold,#f5b301)';
