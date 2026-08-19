@@ -32,6 +32,8 @@ export function delegationWarnings(record, board) {
     out.push('This pool has committed to no payout policy, so by default it keeps everything its blocks earn. Nothing on-chain obliges it to pay you.');
   } else if (pool.policy_in_force.mode === 'direct') {
     out.push('This pool pays a committed address. The chain stops it redirecting the reward silently, but does not check that address shares anything with you.');
+  } else if (pool.policy_in_force.mode === 'split') {
+    out.push('This pool shares rewards proportionally: they pool up on-chain and anyone can trigger the payout. Leaving forfeits your unclaimed share, so claim your rewards before you leave.');
   }
   for (const q of (pool.policy_pending || [])) {
     const when = new Date(Date.now() + q.blocks_away * (board.block_seconds || 60) * 1000);
