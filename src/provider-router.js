@@ -116,7 +116,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
           'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexMarketOrder', 'dexPlaceLimit'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit'],
         events: ['accountsChanged', 'disconnect'],
       };
 
