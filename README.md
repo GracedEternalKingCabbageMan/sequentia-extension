@@ -24,13 +24,18 @@ confidential `tsqb1…` addresses are an explicit opt-in).
   the hosted SeqLN rail (Tier-2: keyless hosted nodes, this device co-signs
   everything; the LSP can route but never move funds), plus non-custodial
   move-to-Lightning / move-to-chain channel management.
-- **Website connections** — injects `window.sequentia` so sites (the upcoming
-  standalone SeqDEX among them) can connect, read balances, and request
-  signatures behind per-origin permissions and per-request approval windows.
+- **Website connections** — injects `window.sequentia` so sites (the SeqDEX
+  site at https://sequentiatestnet.com/dex/ among them) can connect, read
+  balances, request signatures, and take or place DEX orders
+  (`dexFillOnchain`, `dexSwapLn`, `dexMarketOrder`, `dexPlaceLimit`), behind
+  per-origin permissions and per-request approval windows.
   Protocol spec: [doc/PROVIDER.md](doc/PROVIDER.md).
+- **Staking pool delegation** — the Stake tab lends an existing stake's weight
+  to a pool, and takes it back, without moving any coins.
 
-Deliberately **not** included (use the [web wallet](https://sequentiatestnet.com/wallet)):
-staking, asset issuance, and the built-in DEX.
+Not included in the popup (use the [web wallet](https://sequentiatestnet.com/wallet)
+or the desktop node wallet): creating a stake, running a pool, asset issuance,
+and a DEX trading UI.
 
 ## Security model
 
@@ -55,8 +60,10 @@ build step is needed to load the extension.
 ## Development
 
 - Plain ES modules, no bundler, no framework (same constraint as the web
-  wallet). The background service worker owns all wallet state; the popup and
-  approval pages are thin RPC clients.
+  wallet). The background service worker owns wallet state and routing; the
+  popup and approval pages are thin RPC clients; long Lightning and DEX jobs
+  run in a persistent offscreen document so a service-worker death cannot
+  lose their outcome.
 - Tests: `node --test 'test/*.test.mjs'`
 - Icons: `node scripts/gen-icons.mjs`
 - Rebuild the SWK wasm (needs the SWK checkout + clang):
@@ -72,11 +79,15 @@ build step is needed to load the extension.
 manifest.json          MV3 manifest (module SW, wasm-unsafe-eval CSP)
 background.js          service worker: message router, lifecycle, overview
 src/                   engine (SWK wasm, dual-chain), vault, assets, openamp,
-                       ln, permissions, provider router
+                       ln, dex, staking, permissions, provider router
+offscreen.html/.js     persistent offscreen document: long Lightning and DEX
+offscreen-boot.js      jobs (taker swaps, wallet-as-maker), survives SW death
 content/               inpage provider (MAIN world) + relay (isolated world)
 popup/                 wallet UI     approval/  site-request approval window
-vendor/                modules shared with sequentia-web-wallet (btc.js,
-                       seqln.js, seqln-keys.js, lightning signer SDK)
+vendor/                modules copied from sequentia-web-wallet (btc.js,
+                       seqln.js, seqln-keys.js, seqob.js, covenant.js,
+                       covenant-order.js, covenant-fill-host.js,
+                       noble-ciphers.js, lightning/ signer SDK)
 pkg/                   SWK lwk_wasm build (committed)
 doc/PROVIDER.md        the website provider protocol
 ```

@@ -1,10 +1,11 @@
 # The Sequentia website provider protocol
 
 The extension injects `window.sequentia` into every page. Websites (for
-example the upcoming standalone SeqDEX site) use it to connect to the user's
-wallet, read balances, and request signatures. There is no other wallet-to-site
-channel: sites never see the mnemonic, never sign anything themselves, and
-every sensitive operation opens an approval window the user must confirm.
+example the SeqDEX site at https://sequentiatestnet.com/dex/) use it to
+connect to the user's wallet, read balances, and request signatures. There is
+no other wallet-to-site channel: sites never see the mnemonic, never sign
+anything themselves, and every sensitive operation opens an approval window
+the user must confirm.
 
 This document is the contract between the extension
 (`src/provider-router.js`) and site authors. Keep the two in sync.
@@ -88,6 +89,17 @@ signed resting orders (SINGLE|ANYONECANPAY-style intents) possible.
 ### `signMessage({ message })` — approval per request
 `{ signature }` over the given UTF-8 message with the wallet's key.
 
+### `getStakerPublicKey()` — silent, requires connection and an unlocked wallet
+`{ staker_pubkey }`: the wallet's staking key (derivation `m/2/0`), the key a
+stake is bonded to.
+
+### `signStakerMessage({ message })` — approval per request
+`{ signature, staker_pubkey }`: a signature over the UTF-8 message under the
+staking key, in the same base64 form `signMessage` returns. It proves control
+of the key a stake is bonded to, which a master-key signature cannot. It
+authorises no payment and cannot move a stake; only a transaction can do
+either.
+
 ### `broadcast({ pset? , hex?, chain? })` — silent, requires connection
 Relays an already-signed transaction: either a finalized-able `pset` (base64)
 or a raw `hex`; `chain: 'bitcoin'` sends `hex` to testnet4 instead of
@@ -147,17 +159,32 @@ transaction. Returns `{ txid, paid: {asset, atoms}, received: {asset, atoms} }`.
 LNDEX taker swap: both legs travel over the user's OWN hosted Lightning
 nodes (device-co-signed; the LSP routes but cannot move funds). `quote` is
 `'BTC'` for a cross-chain market or an asset id for asset-to-asset. Omitting
-`takeAtoms` lifts the whole offer. Returns
-`{ settled, direction, baseAtoms, quoteAtoms, preimage, paymentHash }`.
+`takeAtoms` lifts the whole offer. After approval the swap runs in the
+wallet's persistent engine and the call returns `{ jobId, pending: true }`;
+poll `dexJobResult({ jobId })` until it answers
+`{ done: true, result: { settled, direction, baseAtoms, quoteAtoms, preimage, paymentHash } }`.
 Instant and final on settlement; on a stall nothing moves.
+
+### `dexJobResult({ jobId? })` — silent, requires connection
+The outcome of a dispatched DEX job (`dexSwapLn`, `dexMarketOrder`,
+`dexPlaceLimit`): `{ done: false }` while it runs, then
+`{ done: true, ok: true, result }` with the `result` shape each method
+documents, or `{ done: true, ok: false, error }` when it failed. Without a
+`jobId` it returns the newest job (plus its `jobId`), so a page that lost the
+id to a restart can still recover the outcome; `{ done: false, none: true }`
+means no job exists.
 
 ## Events
 
-Subscribe with `window.sequentia.on(event, handler)`:
+Subscribe with `window.sequentia.on(event, handler)` and unsubscribe with
+`window.sequentia.removeListener(event, handler)`; both return the provider:
 
 - `accountsChanged` — `{ accounts: [] }` fires when the wallet locks (site
   should treat the session as suspended).
 - `disconnect` — `{}` fires when the user revokes this site in Settings.
+
+The provider also carries `isSequentia: true` and `network:
+'sequentia-testnet'` as plain properties, readable without a request.
 
 ## Design notes for the DEX
 
