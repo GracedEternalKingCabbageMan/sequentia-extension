@@ -40,13 +40,15 @@ wasm. Read this before changing anything.
 ## Provenance / sync obligations
 
 - `vendor/btc.js`, `vendor/seqln.js`, `vendor/seqln-keys.js`,
+  `vendor/seqob.js`, `vendor/covenant.js`, `vendor/covenant-order.js`,
+  `vendor/covenant-fill-host.js`, `vendor/noble-ciphers.js` and
   `vendor/lightning/` are copied from `sequentia-web-wallet` — fix bugs THERE
   and re-copy, don't fork them silently.
 - `pkg/` is the SWK `lwk_wasm` build (size-optimized). Rebuild recipe in
   README.md. It is committed deliberately so the extension loads unpacked
   without a Rust toolchain.
-- `doc/PROVIDER.md` is the contract with future sites (the standalone DEX).
-  `src/provider-router.js` and that document MUST change together.
+- `doc/PROVIDER.md` is the contract with websites (the SeqDEX site first
+  among them). `src/provider-router.js` and that document MUST change together.
 
 ## Endpoints
 
