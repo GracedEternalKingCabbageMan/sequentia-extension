@@ -234,75 +234,6 @@ function _assertClass(instance, klass) {
         throw new Error(`expected instance of ${klass.name}`);
     }
 }
-/**
- * Build the canonical Sequentia stake script for a 33-byte hex `staker_pubkey`
- * and a `csv` relative-timelock; returns the scriptPubKey as hex. Can be
- * cross-checked byte-for-byte against the node's `getstakescript`.
- * @param {string} staker_pubkey
- * @param {number} csv
- * @returns {string}
- */
-export function sequentiaStakeScript(staker_pubkey, csv) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(staker_pubkey, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.sequentiaStakeScript(ptr0, len0, csv);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
-
-function passArrayJsValueToWasm0(array, malloc) {
-    const ptr = malloc(array.length * 4, 4) >>> 0;
-    for (let i = 0; i < array.length; i++) {
-        const add = addToExternrefTable0(array[i]);
-        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
-    }
-    WASM_VECTOR_LEN = array.length;
-    return ptr;
-}
-/**
- * Convert the given string to a QR code image uri
- *
- * The image format is monocromatic bitmap, returned as an encoded in base64 uri.
- *
- * Without `pixel_per_module` the default is no border, and 1 pixel per module, to be used
- * for example in html: `style="image-rendering: pixelated; border: 20px solid white;"`
- * @param {string} str
- * @param {number | null} [pixel_per_module]
- * @returns {string}
- */
-export function stringToQr(str, pixel_per_module) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.stringToQr(ptr0, len0, isLikeNone(pixel_per_module) ? 0xFFFFFF : pixel_per_module);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
 
 function getArrayJsValueFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
@@ -379,6 +310,76 @@ export function scriptToAddress(spk_hex, network) {
         const len0 = WASM_VECTOR_LEN;
         _assertClass(network, Network);
         const ret = wasm.scriptToAddress(ptr0, len0, network.__wbg_ptr);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Build the canonical Sequentia stake script for a 33-byte hex `staker_pubkey`
+ * and a `csv` relative-timelock; returns the scriptPubKey as hex. Can be
+ * cross-checked byte-for-byte against the node's `getstakescript`.
+ * @param {string} staker_pubkey
+ * @param {number} csv
+ * @returns {string}
+ */
+export function sequentiaStakeScript(staker_pubkey, csv) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(staker_pubkey, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sequentiaStakeScript(ptr0, len0, csv);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+function passArrayJsValueToWasm0(array, malloc) {
+    const ptr = malloc(array.length * 4, 4) >>> 0;
+    for (let i = 0; i < array.length; i++) {
+        const add = addToExternrefTable0(array[i]);
+        getDataViewMemory0().setUint32(ptr + 4 * i, add, true);
+    }
+    WASM_VECTOR_LEN = array.length;
+    return ptr;
+}
+/**
+ * Convert the given string to a QR code image uri
+ *
+ * The image format is monocromatic bitmap, returned as an encoded in base64 uri.
+ *
+ * Without `pixel_per_module` the default is no border, and 1 pixel per module, to be used
+ * for example in html: `style="image-rendering: pixelated; border: 20px solid white;"`
+ * @param {string} str
+ * @param {number | null} [pixel_per_module]
+ * @returns {string}
+ */
+export function stringToQr(str, pixel_per_module) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(str, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.stringToQr(ptr0, len0, isLikeNone(pixel_per_module) ? 0xFFFFFF : pixel_per_module);
         var ptr2 = ret[0];
         var len2 = ret[1];
         if (ret[3]) {
@@ -1339,23 +1340,23 @@ export function buildSeqHtlcRefundTx(spend, redeem_script, refund_secret, lockti
     }
 }
 
-function __wbg_adapter_6(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__ha0e437aa39c594bf(arg0, arg1);
-}
-
-function __wbg_adapter_9(arg0, arg1, arg2) {
+function __wbg_adapter_8(arg0, arg1, arg2) {
     wasm.closure1086_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_12(arg0, arg1) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c25c7484968f562(arg0, arg1);
-}
-
-function __wbg_adapter_15(arg0, arg1, arg2) {
+function __wbg_adapter_21(arg0, arg1, arg2) {
     wasm.closure1815_externref_shim(arg0, arg1, arg2);
 }
 
-function __wbg_adapter_701(arg0, arg1, arg2, arg3) {
+function __wbg_adapter_26(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha0e437aa39c594bf(arg0, arg1);
+}
+
+function __wbg_adapter_29(arg0, arg1) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h3c25c7484968f562(arg0, arg1);
+}
+
+function __wbg_adapter_702(arg0, arg1, arg2, arg3) {
     wasm.closure2630_externref_shim(arg0, arg1, arg2, arg3);
 }
 
@@ -6044,6 +6045,41 @@ export class Signer {
         }
     }
     /**
+     * Sign a message with the Sequentia STAKING key (m/2/0), in exactly the
+     * form [`Self::sign_message`] returns for the master key: a recoverable
+     * ECDSA signature over the Bitcoin signed-message digest, base64.
+     *
+     * This exists so a wallet can prove it controls the key its stake is bonded
+     * to without the user copying anything by hand. The stake sits under
+     * m/2/0, so a signature from the master key proves control of a DIFFERENT
+     * key and says nothing about the stake; anyone verifying has to be able to
+     * recover this key specifically.
+     *
+     * The secret never leaves Rust, as with the OpenAMP identity below.
+     * @param {string} message
+     * @returns {string}
+     */
+    signMessageWithStakerKey(message) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(message, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.signer_signMessageWithStakerKey(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
      * Return keyorigin and xpub, like "[73c5da0a/84h/1h/0h]tpub..."
      * @param {Bip} bip
      * @returns {string}
@@ -9148,7 +9184,7 @@ function __wbg_get_imports() {
                 const a = state0.a;
                 state0.a = 0;
                 try {
-                    return __wbg_adapter_701(a, state0.b, arg0, arg1);
+                    return __wbg_adapter_702(a, state0.b, arg0, arg1);
                 } finally {
                     state0.a = a;
                 }
@@ -9534,17 +9570,17 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbindgen_cast_069fa02e6137cde0 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1085, function: Function { arguments: [NamedExternref("MessageEvent")], shim_idx: 1086, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_9);
+        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_8);
         return ret;
     };
     imports.wbg.__wbindgen_cast_09b1729953f4b652 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1767, function: Function { arguments: [], shim_idx: 1768, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1767, __wbg_adapter_6);
+        const ret = makeMutClosure(arg0, arg1, 1767, __wbg_adapter_26);
         return ret;
     };
     imports.wbg.__wbindgen_cast_21186e0158a25d2c = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1804, function: Function { arguments: [Externref], shim_idx: 1815, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1804, __wbg_adapter_15);
+        const ret = makeMutClosure(arg0, arg1, 1804, __wbg_adapter_21);
         return ret;
     };
     imports.wbg.__wbindgen_cast_2241b6af4c4b2941 = function(arg0, arg1) {
@@ -9554,7 +9590,7 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbindgen_cast_30d25b115777d904 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1085, function: Function { arguments: [NamedExternref("CloseEvent")], shim_idx: 1086, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_9);
+        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_8);
         return ret;
     };
     imports.wbg.__wbindgen_cast_4625c577ab2ec9ee = function(arg0) {
@@ -9569,7 +9605,7 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbindgen_cast_ba17a5380a51cc32 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1221, function: Function { arguments: [], shim_idx: 1222, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1221, __wbg_adapter_12);
+        const ret = makeMutClosure(arg0, arg1, 1221, __wbg_adapter_29);
         return ret;
     };
     imports.wbg.__wbindgen_cast_cb9088102bce6b30 = function(arg0, arg1) {
@@ -9579,7 +9615,7 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbindgen_cast_d0430076231984c8 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1085, function: Function { arguments: [NamedExternref("ErrorEvent")], shim_idx: 1086, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_9);
+        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_8);
         return ret;
     };
     imports.wbg.__wbindgen_cast_d6cd19b81560fd6e = function(arg0) {
@@ -9589,7 +9625,7 @@ function __wbg_get_imports() {
     };
     imports.wbg.__wbindgen_cast_ecd342bfd7296342 = function(arg0, arg1) {
         // Cast intrinsic for `Closure(Closure { dtor_idx: 1085, function: Function { arguments: [NamedExternref("Event")], shim_idx: 1086, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_9);
+        const ret = makeMutClosure(arg0, arg1, 1085, __wbg_adapter_8);
         return ret;
     };
     imports.wbg.__wbindgen_init_externref_table = function() {

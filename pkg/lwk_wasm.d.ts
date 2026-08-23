@@ -1,21 +1,6 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Build the canonical Sequentia stake script for a 33-byte hex `staker_pubkey`
- * and a `csv` relative-timelock; returns the scriptPubKey as hex. Can be
- * cross-checked byte-for-byte against the node's `getstakescript`.
- */
-export function sequentiaStakeScript(staker_pubkey: string, csv: number): string;
-/**
- * Convert the given string to a QR code image uri
- *
- * The image format is monocromatic bitmap, returned as an encoded in base64 uri.
- *
- * Without `pixel_per_module` the default is no border, and 1 pixel per module, to be used
- * for example in html: `style="image-rendering: pixelated; border: 20px solid white;"`
- */
-export function stringToQr(str: string, pixel_per_module?: number | null): string;
-/**
  * Assemble, sign, and serialize the covenant FILL transaction in-browser.
  *
  * Takes the JS FILL recipe (see [`CovenantFillRecipeJson`]) merged with the
@@ -48,6 +33,21 @@ export function buildCovenantRefundTx(recipe: any, network: Network): any;
  * sends to (`hooks.spkToAddress`). Returns the unblinded (transparent) address.
  */
 export function scriptToAddress(spk_hex: string, network: Network): string;
+/**
+ * Build the canonical Sequentia stake script for a 33-byte hex `staker_pubkey`
+ * and a `csv` relative-timelock; returns the scriptPubKey as hex. Can be
+ * cross-checked byte-for-byte against the node's `getstakescript`.
+ */
+export function sequentiaStakeScript(staker_pubkey: string, csv: number): string;
+/**
+ * Convert the given string to a QR code image uri
+ *
+ * The image format is monocromatic bitmap, returned as an encoded in base64 uri.
+ *
+ * Without `pixel_per_module` the default is no border, and 1 pixel per module, to be used
+ * for example in html: `style="image-rendering: pixelated; border: 20px solid white;"`
+ */
+export function stringToQr(str: string, pixel_per_module?: number | null): string;
 /**
  * Unblind the outputs of a CoinJoin round transaction that belong to this wallet.
  *
@@ -1861,6 +1861,20 @@ export class Signer {
    */
   stakerPublicKey(): string;
   /**
+   * Sign a message with the Sequentia STAKING key (m/2/0), in exactly the
+   * form [`Self::sign_message`] returns for the master key: a recoverable
+   * ECDSA signature over the Bitcoin signed-message digest, base64.
+   *
+   * This exists so a wallet can prove it controls the key its stake is bonded
+   * to without the user copying anything by hand. The stake sits under
+   * m/2/0, so a signature from the master key proves control of a DIFFERENT
+   * key and says nothing about the stake; anyone verifying has to be able to
+   * recover this key specifically.
+   *
+   * The secret never leaves Rust, as with the OpenAMP identity below.
+   */
+  signMessageWithStakerKey(message: string): string;
+  /**
    * Return keyorigin and xpub, like "[73c5da0a/84h/1h/0h]tpub..."
    */
   keyoriginXpub(bip: Bip): string;
@@ -2900,6 +2914,101 @@ export interface InitOutput {
   readonly jsteststore_write: (a: number, b: number, c: number, d: number, e: number) => [number, number];
   readonly jsteststore_read: (a: number, b: number, c: number) => [number, number, number, number];
   readonly jsteststore_remove: (a: number, b: number, c: number) => [number, number];
+  readonly __wbg_balance_free: (a: number, b: number) => void;
+  readonly balance_toJSON: (a: number) => [number, number, number];
+  readonly balance_entries: (a: number) => [number, number, number];
+  readonly balance_toString: (a: number) => [number, number];
+  readonly __wbg_externalutxo_free: (a: number, b: number) => void;
+  readonly externalutxo_new: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+  readonly __wbg_boltzsessionbuilder_free: (a: number, b: number) => void;
+  readonly __wbg_boltzsession_free: (a: number, b: number) => void;
+  readonly boltzsessionbuilder_new: (a: number, b: number) => [number, number, number];
+  readonly boltzsessionbuilder_createSwapTimeout: (a: number, b: bigint) => number;
+  readonly boltzsessionbuilder_timeoutAdvance: (a: number, b: bigint) => number;
+  readonly boltzsessionbuilder_mnemonic: (a: number, b: number) => number;
+  readonly boltzsessionbuilder_polling: (a: number, b: number) => number;
+  readonly boltzsessionbuilder_nextIndexToUse: (a: number, b: number) => number;
+  readonly boltzsessionbuilder_referralId: (a: number, b: number, c: number) => number;
+  readonly boltzsessionbuilder_apiUrl: (a: number, b: number, c: number) => number;
+  readonly boltzsessionbuilder_bitcoinElectrumClient: (a: number, b: number, c: number) => [number, number, number];
+  readonly boltzsessionbuilder_randomPreimages: (a: number, b: number) => number;
+  readonly boltzsessionbuilder_build: (a: number) => any;
+  readonly __wbg_preparepayresponse_free: (a: number, b: number) => void;
+  readonly preparepayresponse_serialize: (a: number) => [number, number, number, number];
+  readonly preparepayresponse_swapId: (a: number) => [number, number];
+  readonly preparepayresponse_uri: (a: number) => [number, number];
+  readonly preparepayresponse_uriAddress: (a: number) => [number, number, number];
+  readonly preparepayresponse_uriAmount: (a: number) => bigint;
+  readonly preparepayresponse_fee: (a: number) => [number, bigint];
+  readonly preparepayresponse_completePay: (a: number) => any;
+  readonly __wbg_invoice_free: (a: number, b: number) => void;
+  readonly invoice_toString: (a: number) => [number, number];
+  readonly invoice_amountSats: (a: number) => [bigint, number, number];
+  readonly invoice_isBolt11: (a: number) => number;
+  readonly invoice_isBolt12: (a: number) => number;
+  readonly invoice_bolt11Invoice: (a: number) => [number, number];
+  readonly invoice_bolt12Invoice: (a: number) => [number, number];
+  readonly __wbg_invoiceresponse_free: (a: number, b: number) => void;
+  readonly invoiceresponse_serialize: (a: number) => [number, number, number, number];
+  readonly invoiceresponse_bolt11Invoice: (a: number) => [number, number];
+  readonly invoiceresponse_swapId: (a: number) => [number, number];
+  readonly invoiceresponse_fee: (a: number) => [number, bigint];
+  readonly invoiceresponse_completePay: (a: number) => any;
+  readonly boltzsession_rescueFile: (a: number) => [number, number, number, number];
+  readonly boltzsession_preparePay: (a: number, b: number, c: number) => any;
+  readonly boltzsession_fetchBolt12Invoice: (a: number, b: number) => any;
+  readonly boltzsession_invoice: (a: number, b: bigint, c: number, d: number, e: number) => any;
+  readonly boltzsession_restorePreparePay: (a: number, b: number, c: number) => any;
+  readonly boltzsession_restoreInvoice: (a: number, b: number, c: number) => any;
+  readonly __wbg_lightningpayment_free: (a: number, b: number) => void;
+  readonly lightningpayment_new: (a: number, b: number) => [number, number, number];
+  readonly lightningpayment_toString: (a: number) => [number, number];
+  readonly lightningpayment_toUriQr: (a: number, b: number) => [number, number, number, number];
+  readonly __wbg_pset_free: (a: number, b: number) => void;
+  readonly pset_new: (a: number, b: number) => [number, number, number];
+  readonly pset_toString: (a: number) => [number, number];
+  readonly pset_extractTx: (a: number) => [number, number, number];
+  readonly pset_uniqueId: (a: number) => [number, number, number];
+  readonly pset_combine: (a: number, b: number) => [number, number];
+  readonly pset_inputs: (a: number) => [number, number];
+  readonly pset_outputs: (a: number) => [number, number];
+  readonly pset_addDetails: (a: number, b: number) => [number, number];
+  readonly __wbg_psetinput_free: (a: number, b: number) => void;
+  readonly psetinput_previousTxid: (a: number) => number;
+  readonly psetinput_previousVout: (a: number) => number;
+  readonly psetinput_previousScriptPubkey: (a: number) => number;
+  readonly psetinput_redeemScript: (a: number) => number;
+  readonly psetinput_issuanceAsset: (a: number) => number;
+  readonly psetinput_issuanceToken: (a: number) => number;
+  readonly psetinput_issuance: (a: number) => number;
+  readonly psetinput_sighash: (a: number) => number;
+  readonly psetinput_issuanceIds: (a: number) => [number, number];
+  readonly __wbg_psetoutput_free: (a: number, b: number) => void;
+  readonly psetoutput_scriptPubkey: (a: number) => number;
+  readonly psetoutput_amount: (a: number) => [number, bigint];
+  readonly psetoutput_asset: (a: number) => number;
+  readonly psetoutput_blinderIndex: (a: number) => number;
+  readonly buildCovenantFillTx: (a: any, b: number) => [number, number, number];
+  readonly buildCovenantRefundTx: (a: any, b: number) => [number, number, number];
+  readonly signer_covenantMakerAddress: (a: number, b: number, c: number) => [number, number, number];
+  readonly signer_covenantMakerDescriptor: (a: number) => [number, number, number];
+  readonly scriptToAddress: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly __wbg_signer_free: (a: number, b: number) => void;
+  readonly signer_new: (a: number, b: number) => [number, number, number];
+  readonly signer_sign: (a: number, b: number) => [number, number, number];
+  readonly signer_signMessage: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly signer_wpkhSlip77Descriptor: (a: number) => [number, number, number];
+  readonly signer_getMasterXpub: (a: number) => [number, number, number];
+  readonly signer_stakerPublicKey: (a: number) => [number, number, number, number];
+  readonly signer_signMessageWithStakerKey: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly signer_keyoriginXpub: (a: number, b: number) => [number, number, number, number];
+  readonly signer_fingerprint: (a: number) => [number, number, number, number];
+  readonly signer_mnemonic: (a: number) => number;
+  readonly signer_derive_bip85_mnemonic: (a: number, b: number, c: number) => [number, number, number];
+  readonly signer_openampXonlyPubkey: (a: number) => [number, number, number, number];
+  readonly signer_openampSignSighash: (a: number, b: number, c: number) => [number, number, number, number];
+  readonly signer_openampSignTagged: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+  readonly signer_openampSignChallenge: (a: number, b: number, c: number) => [number, number, number, number];
   readonly __wbg_address_free: (a: number, b: number) => void;
   readonly address_new: (a: number, b: number) => [number, number, number];
   readonly address_parse: (a: number, b: number, c: number) => [number, number, number];
@@ -2998,100 +3107,6 @@ export interface InitOutput {
   readonly stringToQr: (a: number, b: number, c: number) => [number, number, number, number];
   readonly txbuilder_new: (a: number) => number;
   readonly transaction_toBytes: (a: number) => [number, number];
-  readonly __wbg_balance_free: (a: number, b: number) => void;
-  readonly balance_toJSON: (a: number) => [number, number, number];
-  readonly balance_entries: (a: number) => [number, number, number];
-  readonly balance_toString: (a: number) => [number, number];
-  readonly __wbg_externalutxo_free: (a: number, b: number) => void;
-  readonly externalutxo_new: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-  readonly __wbg_boltzsessionbuilder_free: (a: number, b: number) => void;
-  readonly __wbg_boltzsession_free: (a: number, b: number) => void;
-  readonly boltzsessionbuilder_new: (a: number, b: number) => [number, number, number];
-  readonly boltzsessionbuilder_createSwapTimeout: (a: number, b: bigint) => number;
-  readonly boltzsessionbuilder_timeoutAdvance: (a: number, b: bigint) => number;
-  readonly boltzsessionbuilder_mnemonic: (a: number, b: number) => number;
-  readonly boltzsessionbuilder_polling: (a: number, b: number) => number;
-  readonly boltzsessionbuilder_nextIndexToUse: (a: number, b: number) => number;
-  readonly boltzsessionbuilder_referralId: (a: number, b: number, c: number) => number;
-  readonly boltzsessionbuilder_apiUrl: (a: number, b: number, c: number) => number;
-  readonly boltzsessionbuilder_bitcoinElectrumClient: (a: number, b: number, c: number) => [number, number, number];
-  readonly boltzsessionbuilder_randomPreimages: (a: number, b: number) => number;
-  readonly boltzsessionbuilder_build: (a: number) => any;
-  readonly __wbg_preparepayresponse_free: (a: number, b: number) => void;
-  readonly preparepayresponse_serialize: (a: number) => [number, number, number, number];
-  readonly preparepayresponse_swapId: (a: number) => [number, number];
-  readonly preparepayresponse_uri: (a: number) => [number, number];
-  readonly preparepayresponse_uriAddress: (a: number) => [number, number, number];
-  readonly preparepayresponse_uriAmount: (a: number) => bigint;
-  readonly preparepayresponse_fee: (a: number) => [number, bigint];
-  readonly preparepayresponse_completePay: (a: number) => any;
-  readonly __wbg_invoice_free: (a: number, b: number) => void;
-  readonly invoice_toString: (a: number) => [number, number];
-  readonly invoice_amountSats: (a: number) => [bigint, number, number];
-  readonly invoice_isBolt11: (a: number) => number;
-  readonly invoice_isBolt12: (a: number) => number;
-  readonly invoice_bolt11Invoice: (a: number) => [number, number];
-  readonly invoice_bolt12Invoice: (a: number) => [number, number];
-  readonly __wbg_invoiceresponse_free: (a: number, b: number) => void;
-  readonly invoiceresponse_serialize: (a: number) => [number, number, number, number];
-  readonly invoiceresponse_bolt11Invoice: (a: number) => [number, number];
-  readonly invoiceresponse_swapId: (a: number) => [number, number];
-  readonly invoiceresponse_fee: (a: number) => [number, bigint];
-  readonly invoiceresponse_completePay: (a: number) => any;
-  readonly boltzsession_rescueFile: (a: number) => [number, number, number, number];
-  readonly boltzsession_preparePay: (a: number, b: number, c: number) => any;
-  readonly boltzsession_fetchBolt12Invoice: (a: number, b: number) => any;
-  readonly boltzsession_invoice: (a: number, b: bigint, c: number, d: number, e: number) => any;
-  readonly boltzsession_restorePreparePay: (a: number, b: number, c: number) => any;
-  readonly boltzsession_restoreInvoice: (a: number, b: number, c: number) => any;
-  readonly __wbg_lightningpayment_free: (a: number, b: number) => void;
-  readonly lightningpayment_new: (a: number, b: number) => [number, number, number];
-  readonly lightningpayment_toString: (a: number) => [number, number];
-  readonly lightningpayment_toUriQr: (a: number, b: number) => [number, number, number, number];
-  readonly __wbg_pset_free: (a: number, b: number) => void;
-  readonly pset_new: (a: number, b: number) => [number, number, number];
-  readonly pset_toString: (a: number) => [number, number];
-  readonly pset_extractTx: (a: number) => [number, number, number];
-  readonly pset_uniqueId: (a: number) => [number, number, number];
-  readonly pset_combine: (a: number, b: number) => [number, number];
-  readonly pset_inputs: (a: number) => [number, number];
-  readonly pset_outputs: (a: number) => [number, number];
-  readonly pset_addDetails: (a: number, b: number) => [number, number];
-  readonly __wbg_psetinput_free: (a: number, b: number) => void;
-  readonly psetinput_previousTxid: (a: number) => number;
-  readonly psetinput_previousVout: (a: number) => number;
-  readonly psetinput_previousScriptPubkey: (a: number) => number;
-  readonly psetinput_redeemScript: (a: number) => number;
-  readonly psetinput_issuanceAsset: (a: number) => number;
-  readonly psetinput_issuanceToken: (a: number) => number;
-  readonly psetinput_issuance: (a: number) => number;
-  readonly psetinput_sighash: (a: number) => number;
-  readonly psetinput_issuanceIds: (a: number) => [number, number];
-  readonly __wbg_psetoutput_free: (a: number, b: number) => void;
-  readonly psetoutput_scriptPubkey: (a: number) => number;
-  readonly psetoutput_amount: (a: number) => [number, bigint];
-  readonly psetoutput_asset: (a: number) => number;
-  readonly psetoutput_blinderIndex: (a: number) => number;
-  readonly buildCovenantFillTx: (a: any, b: number) => [number, number, number];
-  readonly buildCovenantRefundTx: (a: any, b: number) => [number, number, number];
-  readonly signer_covenantMakerAddress: (a: number, b: number, c: number) => [number, number, number];
-  readonly signer_covenantMakerDescriptor: (a: number) => [number, number, number];
-  readonly scriptToAddress: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly __wbg_signer_free: (a: number, b: number) => void;
-  readonly signer_new: (a: number, b: number) => [number, number, number];
-  readonly signer_sign: (a: number, b: number) => [number, number, number];
-  readonly signer_signMessage: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly signer_wpkhSlip77Descriptor: (a: number) => [number, number, number];
-  readonly signer_getMasterXpub: (a: number) => [number, number, number];
-  readonly signer_stakerPublicKey: (a: number) => [number, number, number, number];
-  readonly signer_keyoriginXpub: (a: number, b: number) => [number, number, number, number];
-  readonly signer_fingerprint: (a: number) => [number, number, number, number];
-  readonly signer_mnemonic: (a: number) => number;
-  readonly signer_derive_bip85_mnemonic: (a: number, b: number, c: number) => [number, number, number];
-  readonly signer_openampXonlyPubkey: (a: number) => [number, number, number, number];
-  readonly signer_openampSignSighash: (a: number, b: number, c: number) => [number, number, number, number];
-  readonly signer_openampSignTagged: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-  readonly signer_openampSignChallenge: (a: number, b: number, c: number) => [number, number, number, number];
   readonly coinjoinUnblindOutputs: (a: number, b: number, c: number) => [number, number, number];
   readonly coinjoinSignInputs: (a: any, b: number) => [number, number, number, number];
   readonly __wbg_psetdetails_free: (a: number, b: number) => void;
@@ -3388,10 +3403,10 @@ export interface InitOutput {
   readonly __externref_table_dealloc: (a: number) => void;
   readonly __wbindgen_free: (a: number, b: number, c: number) => void;
   readonly __externref_drop_slice: (a: number, b: number) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__ha0e437aa39c594bf: (a: number, b: number) => void;
   readonly closure1086_externref_shim: (a: number, b: number, c: any) => void;
-  readonly wasm_bindgen__convert__closures_____invoke__h3c25c7484968f562: (a: number, b: number) => void;
   readonly closure1815_externref_shim: (a: number, b: number, c: any) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__ha0e437aa39c594bf: (a: number, b: number) => void;
+  readonly wasm_bindgen__convert__closures_____invoke__h3c25c7484968f562: (a: number, b: number) => void;
   readonly closure2630_externref_shim: (a: number, b: number, c: any, d: any) => void;
   readonly __wbindgen_start: () => void;
 }
