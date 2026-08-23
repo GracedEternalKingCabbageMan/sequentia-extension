@@ -302,17 +302,35 @@ async function runRest(job, p) {
       if (!/^[0-9a-f]{64}$/.test(H)) throw new Error('bad hash from taker');
       const inKey = sell ? provCounter.key : provBase.key;
       const inAsset = sell ? (p.counterKind === 'BTC' ? undefined : p.counterKind) : p.base;
+      // Cross-chain timelock arithmetic (mirrors seqdex pkg/xchain/cltv.go): the chain that must be
+      // slow is taken slow, the one that must be fast is taken fast. The incoming hold's lifetime is
+      // whatever the taker pays it with, so the maker names the hold timelock it needs to pay the
+      // taker's invoice safely, then caps the outgoing route below the hold as actually paid.
+      const TIMING = { btc: { fast: 150, slow: 900 }, seq: { fast: 60, slow: 90 } };
+      const inIsBtc = sell && p.counterKind === 'BTC';
+      const outIsBtc = !sell && p.counterKind === 'BTC';
+      const inT = inIsBtc ? TIMING.btc : TIMING.seq, outT = outIsBtc ? TIMING.btc : TIMING.seq;
+      const routeAllowance = outIsBtc ? 24 : 120;
+      const SETTLE_MARGIN = 20 * 60, HOLD_WAIT = 150;
+      const holdCltv = Math.ceil(((18 + routeAllowance) * outT.slow + HOLD_WAIT + SETTLE_MARGIN) / inT.fast);
       await seqlnNodeInvoice({ node_key: inKey, asset: inAsset, amount: Number(sell ? q : take), payment_hash: H, expiry: 900 });
-      await say({ type: 'pln_hold_ready', hash_h: H });
+      await say({ type: 'pln_hold_ready', hash_h: H, hold_cltv: holdCltv });
       const hDead = Date.now() + 150_000;
+      let held = null;
       for (;;) {
         const st = await seqlnInvoiceStatus({ node_key: inKey, payment_hash: H }).catch(() => ({}));
-        if (st.held || st.state === 'accepted') break;
+        if (st.held || st.state === 'accepted') { held = st; break; }
         if (Date.now() > hDead) throw new Error('taker never paid the hold');
         await new Promise((r) => setTimeout(r, 700));
       }
+      // Cap the outgoing payment's timelock below the held HTLC's real expiry. Without the
+      // expiry (an older node) the swap is refused rather than paid blind.
+      const remaining = Number(held.htlc_expiry) - Number(held.btc_tip);
+      if (!Number.isFinite(remaining) || remaining <= 0) throw new Error('hold reported no expiry; refusing to pay blind');
+      const maxCltv = Math.floor((remaining * inT.fast - SETTLE_MARGIN) / outT.slow);
+      if (!(maxCltv > 0)) throw new Error('the taker paid the hold with too short a timelock (' + remaining + ' blocks left)');
       const outKey = sell ? provBase.key : provCounter.key;
-      const paid = await seqlnNodePay({ node_key: outKey, bolt11: inv.bolt11, wantHash: H });
+      const paid = await seqlnNodePay({ node_key: outKey, bolt11: inv.bolt11, wantHash: H, maxCltv });
       const P = String((paid && (paid.preimage || paid.payment_preimage)) || '').toLowerCase();
       if (!/^[0-9a-f]{64}$/.test(P)) throw new Error('pay returned no preimage');
       await seqlnNodeSettle({ node_key: inKey, payment_hash: H, preimage: P });
