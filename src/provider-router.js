@@ -116,7 +116,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
           'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'signBtcTaproot', 'prepareBtcSend'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -339,6 +339,31 @@ export async function handleDappRequest(origin, method, params = {}) {
       }, async () => { await ensureOpenOrThrow(); return await ln.payInvoice({ kind, bolt11 }); });
     }
 
+    case 'getBtcPublicKey': {
+      await requireUnlockedAndConnected(origin);
+      return { pubkey_x: await engine.pignusBtcPubkey() };
+    }
+    case 'prepareBtcSend': {
+      await requireConnected(origin);
+      const address = String(params.address || '');
+      const amount = String(params.amount || '');
+      if (!/^\d+$/.test(amount) || BigInt(amount) <= 0n) throw new Error('amount (sats) required');
+      return requestApproval(origin, 'prepareBtcSend', {
+        text: origin + ' asks to fund a Bitcoin collateral output.',
+        detail: 'Prepare ' + (Number(amount) / 1e8) + ' BTC to ' + address + '. It is broadcast only after the loan\u2019s release is verified.',
+      }, async () => { await ensureOpenOrThrow(); return await engine.prepareBtcSend(address, amount); });
+    }
+    case 'signBtcTaproot': {
+      await requireConnected(origin);
+      const sighash = String(params.sighash || '');
+      if (!/^[0-9a-f]{64}$/i.test(sighash)) throw new Error('sighash must be 32-byte hex');
+      const d = params.display || {};
+      return requestApproval(origin, 'signBtcTaproot', {
+        text: origin + ' asks you to sign the Bitcoin side of a collateral loan.',
+        detail: d.detail || 'This signature cannot move funds on its own; it only completes a loan script you agreed to.',
+        sighash,
+      }, async () => { await ensureOpenOrThrow(); return { signature: await engine.pignusBtcSignTaproot(sighash) }; });
+    }
     default:
       throw new Error('unknown method: ' + method);
   }
