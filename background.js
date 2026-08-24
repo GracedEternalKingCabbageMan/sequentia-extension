@@ -16,6 +16,9 @@ import * as openamp from './src/openamp.js';
 import * as staking from './src/staking.js';
 import * as ln from './src/ln.js';
 import * as dex from './src/dex.js';
+import * as rewards from './src/rewards.js';
+import { attributeStakingRewards, planRewardBatches, decideRewardConversion } from './pkg/lwk_wasm.js';
+import { btc as btcLib } from './vendor/btc.js';
 import * as perms from './src/permissions.js';
 import * as router from './src/provider-router.js';
 import {
@@ -308,6 +311,45 @@ const uiMethods = {
       stakerKey: engine.getSigner().stakerPublicKey(),
     };
   },
+  // --- staking rewards, and converting them --------------------------------
+  // A staker is paid the fees of the blocks it earns from, in whichever assets
+  // the payers chose. The two decisions that must not differ between wallets --
+  // which coins are rewards, and which of them to sell -- are SWK's, reached
+  // through the kit's wasm; everything here is this wallet's own rails.
+  'rewardsOverview': async () => {
+    await engine.ensureOpen();
+    const ctx = rewardConvertContext();
+    let report = null, error = null;
+    try { report = await rewards.runAutoConvert(ctx, { dryRun: true }); }
+    catch (e) { error = String((e && e.message) ?? e); }
+    let totals = [];
+    try {
+      totals = rewards.totalsOf(ctx.engine.attributeStakingRewards(
+        JSON.stringify(ctx.walletTxs()), JSON.stringify(ctx.stakingKeys()),
+        Number(ctx.tipHeight() || 0), 100)).map((t) => ({
+          asset: t.asset, mature: t.mature.toString(), immature: t.immature.toString(),
+          outputs: t.outputs, sources: t.sources,
+        }));
+    } catch (e) { if (!error) error = String((e && e.message) ?? e); }
+    return {
+      settings: await rewards.rewardSettings(),
+      totals,
+      considered: (report ? report.considered : []).map((r) => ({
+        ...r,
+        ticker: (A.assetMeta(r.batch.asset) || {}).ticker || r.batch.asset.slice(0, 8),
+      })),
+      recent: (await rewards.conversions()).filter((c) => c.state === 'done').slice(0, 5),
+      error,
+    };
+  },
+  'rewardsSetConvert': async (patch) => {
+    const next = await rewards.setRewardSettings(patch || {});
+    // Act on it now rather than at the next alarm: a staker who just switched
+    // it on should not have to wonder whether anything is happening.
+    if (next.enabled) runRewardPass().catch(() => {});
+    return next;
+  },
+
   'stakingDelegate': async ({ signer }) => {
     await engine.ensureOpen();
     const pset = await staking.buildDelegate(signer);
@@ -430,3 +472,139 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   })();
   return true;   // async response
 });
+
+
+// --- reward auto-conversion ------------------------------------------------
+// The facts SWK's attribution needs, and the rails this wallet sells on.
+function rewardConvertContext() {
+  const wollet = engine.getWollet();
+  const signer = engine.getSigner();
+  return {
+    engine: { attributeStakingRewards, planRewardBatches, decideRewardConversion },
+    walletTxs: () => {
+      let txs = [];
+      try { txs = wollet.transactions(); } catch { return []; }
+      const out = [];
+      for (const t of txs) {
+        const outputs = [];
+        try {
+          for (const o of (t.outputs() || [])) {
+            const w = o && o.get ? o.get() : null;
+            if (!w) continue;
+            let u; try { u = w.unblinded(); } catch { continue; }
+            outputs.push({
+              vout: Number(w.outpoint().vout()),
+              scriptPubkey: w.scriptPubkey().toString(),
+              asset: u.asset().toString(),
+              value: Number(u.value()),
+              spent: (typeof w.isSpent === 'function') ? !!w.isSpent() : false,
+            });
+          }
+        } catch { continue; }
+        if (!outputs.length) continue;
+        let isCoinbase = false;
+        try { isCoinbase = (typeof t.isCoinbase === 'function') ? !!t.isCoinbase() : false; } catch {}
+        out.push({
+          txid: t.txid().toString(),
+          height: t.height() ?? null,
+          isCoinbase,
+          // A coinbase is never anyone's to send; off that path, "we sent it"
+          // is what excludes our own withdrawal or re-pointing, which pay back
+          // to the very staking key a pool payout would.
+          fromMe: !isCoinbase && t.txType() === 'outgoing',
+          ownedOutputs: outputs,
+        });
+      }
+      return out;
+    },
+    stakingKeys: () => {
+      let pub;
+      try { pub = signer.stakerPublicKey(); } catch { return []; }
+      if (!pub) return [];
+      // A reward is only a reward if it lands on the P2WPKH the coinbase (or a
+      // pot claim) actually pays -- so the script has to be the real one.
+      let scriptHex;
+      try {
+        const bytes = Uint8Array.from((pub.match(/../g) || []).map((h) => parseInt(h, 16)));
+        scriptHex = [...btcLib.p2wpkh(bytes).script].map((b) => b.toString(16).padStart(2, '0')).join('');
+      } catch { scriptHex = null; }
+      if (!scriptHex) return [];
+      return [{ scriptPubkey: scriptHex, pubkey: pub, delegated: !!REWARD_DELEGATED }];
+    },
+    tipHeight: () => { try { return engine.getWollet().tip().height(); } catch { return 0; } },
+    quoteFor: async ({ asset, atoms, target }) => {
+      // Same-chain: what the covenant book pays. Cross-chain: what a maker
+      // buying this asset for Bitcoin pays. Either way `null` means no market,
+      // which is a WAIT and not an error.
+      try {
+        const quote = target === rewards.NATIVE_BTC ? 'BTC' : target;
+        const mount = target === rewards.NATIVE_BTC ? 'pln' : 'chain';
+        const o = await dex.fetchOffer(mount, asset, quote);
+        if (!o) return null;
+        // The rail rests WHOLE offers, so clamp to what staking paid rather
+        // than taking the offer's size: selling more than was earned is the
+        // one mistake this must not make.
+        const offerAtoms = BigInt(o.want_amount ?? o.wantAmount ?? 0);
+        const take = rewards.sliceForWholeHtlc(offerAtoms, BigInt(atoms));
+        if (take <= 0n) return null;
+        const q = dex.sameChainQuote(o, take);
+        if (!q || !q.counterAtoms) return null;
+        const whole = dex.sameChainQuote(o, BigInt(atoms));
+        return {
+          receives: Number(q.counterAtoms),
+          reference: Number((whole && whole.counterAtoms) || q.counterAtoms),
+        };
+      } catch { return null; }
+    },
+    execute: async (plan) => {
+      try {
+        if (plan.target === rewards.NATIVE_BTC) {
+          const job = await dex.prepareLnMarketOrder({
+            base: plan.asset, quote: 'BTC', side: 'sell', baseAtoms: BigInt(plan.atoms),
+          });
+          return { ok: !!job, txid: job && (job.txid || job.jobId) };
+        }
+        const filled = await dex.prepareOnchainFill({
+          mount: 'chain', base: plan.asset, quote: plan.target, takeBase: BigInt(plan.atoms),
+        });
+        return { ok: !!filled, txid: filled && filled.txid };
+      } catch (e) {
+        // Rethrow: the engine treats a throw as AMBIGUOUS and keeps the coins
+        // claimed, which is the right answer when we cannot tell whether the
+        // sale happened.
+        throw e;
+      }
+    },
+  };
+}
+
+let REWARD_DELEGATED = false;
+let rewardPassBusy = false;
+
+async function runRewardPass() {
+  if (rewardPassBusy) return;
+  rewardPassBusy = true;
+  try {
+    if (!(await rewards.rewardSettings()).enabled) return;
+    await engine.ensureOpen();
+    try {
+      const d = await staking.findDelegation(await staking.fetchPools().catch(() => null));
+      REWARD_DELEGATED = !!(d && d.signer);
+    } catch { /* the board is advisory */ }
+    await rewards.runAutoConvert(rewardConvertContext());
+  } catch (e) {
+    console.warn('[rewards] conversion pass failed:', (e && e.message) ?? e);
+  } finally {
+    rewardPassBusy = false;
+  }
+}
+
+// Rewards arrive at block pace at best, and every pass reads the book, so
+// looking more often would only cost requests. The alarm survives the service
+// worker being unloaded, which a setInterval would not.
+try {
+  chrome.alarms.create('rewardConvert', { periodInMinutes: 15 });
+  chrome.alarms.onAlarm.addListener((a) => {
+    if (a && a.name === 'rewardConvert') runRewardPass().catch(() => {});
+  });
+} catch { /* alarms unavailable in this context */ }

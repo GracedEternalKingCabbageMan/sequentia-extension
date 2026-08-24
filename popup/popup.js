@@ -35,7 +35,7 @@ function tab(name) {
   if (name === 'history') renderHistory();
   if (name === 'settings') renderSettings();
   if (name === 'send') fillSendSelectors();
-  if (name === 'stake') renderStake();
+  if (name === 'stake') { renderStake(); renderRewards(); }
 }
 for (const b of document.querySelectorAll('.tabs [data-tab]')) b.onclick = () => tab(b.dataset.tab);
 
@@ -664,4 +664,98 @@ $('btnLeavePool').onclick = async () => {
     await renderStake();
   } catch (e) { msg.textContent = 'Failed: ' + e.message; }
   finally { $('btnLeavePool').disabled = false; }
+};
+
+
+// --- staking rewards, and converting them ----------------------------------
+// The engine lives in the background (it needs the wallet and the kit's wasm);
+// this only shows what it decided. "Nothing happened" and "nothing should have
+// happened" look identical otherwise, and the second is far the more common.
+let REWARDS = null;
+
+// The background knows the registry, so it names the assets; the popup only
+// has to remember what it was told.
+const AC_TICKERS = new Map();
+function acTicker(target) {
+  if (!target || target === 'BTC') return 'BTC';
+  return AC_TICKERS.get(target) || (target.slice(0, 8) + '…');
+}
+
+async function renderRewards() {
+  const list = $('rewardList');
+  if (!list) return;
+  $('acMsg').textContent = '';
+  try { REWARDS = await rpc('rewardsOverview'); }
+  catch (e) { list.textContent = 'Could not read staking rewards: ' + e.message; return; }
+
+  const totals = REWARDS.totals || [];
+  for (const t of totals) if (t.ticker) AC_TICKERS.set(t.asset, t.ticker);
+  for (const r of (REWARDS.considered || [])) if (r.ticker) AC_TICKERS.set(r.batch.asset, r.ticker);
+  if (!totals.length) {
+    list.textContent = 'No staking rewards yet. A block pays its own fees, so rewards appear once a block you (or your pool) produced carried some.';
+  } else {
+    list.innerHTML = '';
+    for (const t of totals) {
+      const row = document.createElement('div');
+      const srcs = Object.entries(t.sources || {}).map(([k, v]) => `${v}× ${k}`).join(' · ');
+      const maturing = BigInt(t.immature || '0') > 0n ? ` · ${t.immature} maturing` : '';
+      row.textContent = `${acTicker(t.asset)}: ${t.mature} spendable${maturing}${srcs ? ' · ' + srcs : ''}`;
+      list.appendChild(row);
+    }
+  }
+
+  const s = REWARDS.settings || {};
+  $('acEnabled').checked = !!s.enabled;
+  $('acSettings').classList.toggle('hide', !s.enabled);
+
+  // Bitcoin first: the top seat is the whole of its privilege here.
+  const sel = $('acTarget');
+  sel.innerHTML = '';
+  const btc = document.createElement('option');
+  btc.value = 'BTC'; btc.textContent = 'BTC (Bitcoin)';
+  sel.appendChild(btc);
+  for (const t of totals) {
+    if (t.asset === 'BTC') continue;
+    const o = document.createElement('option');
+    o.value = t.asset; o.textContent = acTicker(t.asset);
+    sel.appendChild(o);
+  }
+  sel.value = s.target || 'BTC';
+  $('acMin').value = s.minReceive || '';
+  $('acSlip').value = String(s.maxSlippageBp || 200);
+
+  const lines = [];
+  if (!s.enabled) {
+    lines.push('Rewards are being kept as they are.');
+  } else if ((REWARDS.considered || []).length) {
+    for (const r of REWARDS.considered) {
+      const d = r.decision || {};
+      lines.push(`${r.batch.value} ${r.ticker || acTicker(r.batch.asset)} → ${acTicker(s.target)}: ${d.converts ? 'converting' : (d.reason || 'waiting')}`);
+    }
+  } else {
+    lines.push('Nothing to convert right now. Rewards are gathered per asset until a batch is worth converting.');
+  }
+  for (const c of (REWARDS.recent || [])) {
+    lines.push(`Converted ${c.value} ${acTicker(c.asset)} → ${acTicker(c.target)}`);
+  }
+  if (REWARDS.error) lines.push(REWARDS.error);
+  $('acMsg').textContent = lines.join('\n');
+}
+
+async function saveRewardSettings(patch) {
+  try {
+    await rpc('rewardsSetConvert', patch);
+    await renderRewards();
+  } catch (e) {
+    $('acMsg').textContent = 'Could not save: ' + e.message;
+  }
+}
+
+$('acEnabled').onchange = () => saveRewardSettings({ enabled: $('acEnabled').checked });
+$('acTarget').onchange = () => saveRewardSettings({ target: $('acTarget').value });
+$('acSlip').onchange = () => saveRewardSettings({ maxSlippageBp: Number($('acSlip').value) });
+$('acMin').onchange = () => {
+  const v = $('acMin').value.trim();
+  if (v && !/^[0-9]+$/.test(v)) { $('acMsg').textContent = 'That is not an amount in atoms.'; return; }
+  saveRewardSettings({ minReceive: v || '0' });
 };
