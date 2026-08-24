@@ -18,6 +18,7 @@ import init, {
 import { hydrateShim } from './shim.js';
 import * as A from './assets.js';
 import { sessionMnemonic } from './vault.js';
+import { pignusSecret, xOnlyPubkey, signSchnorr } from './btcsign.js';
 import { ESPLORA, T4_API, DEFAULT_FEERATE, BTC_FEERATE } from './config.js';
 import { parseAtoms, fmtAtoms, stGet, stSet } from './util.js';
 
@@ -532,6 +533,24 @@ export function signMessage(message) {
   if (!signer) throw new Error('wallet is locked');
   return signer.signMessage(message);
 }
+export async function pignusBtcPubkey() {
+  const phrase = await sessionMnemonic();
+  if (!phrase) throw new Error('the wallet is locked');
+  return xOnlyPubkey(_bsHex(pignusSecret(phrase)));
+}
+export async function pignusBtcSignTaproot(sighashHex) {
+  if (!/^[0-9a-fA-F]{64}$/.test(String(sighashHex || '')))
+    throw new Error('the sighash must be 32 bytes of hex');
+  const phrase = await sessionMnemonic();
+  if (!phrase) throw new Error('the wallet is locked');
+  return signSchnorr(_bsHex(pignusSecret(phrase)), String(sighashHex).toLowerCase());
+}
+export async function prepareBtcSend(address, amountSats) {
+  if (!btcW) throw new Error('the wallet is locked');
+  const p = await btcW.prepare(mnemonic, address, BigInt(amountSats), BTC_FEERATE);
+  return { txid: String(p.txid), vout: p.vout ?? 0, hex: p.hex };
+}
+function _bsHex(b) { return Array.from(b, (x) => x.toString(16).padStart(2, '0')).join(''); }
 // The wallet's Sequentia staking identity: the key at m/2/0 that a stake is
 // bonded to, and the only key that can ever unbond it. `signMessage` above
 // signs with the MASTER key, which is a different key and proves nothing about
