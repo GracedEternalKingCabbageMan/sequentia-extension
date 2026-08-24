@@ -17,7 +17,8 @@ import * as staking from './src/staking.js';
 import * as ln from './src/ln.js';
 import * as dex from './src/dex.js';
 import * as rewards from './src/rewards.js';
-import { attributeStakingRewards, planRewardBatches, decideRewardConversion } from './pkg/lwk_wasm.js';
+import { attributeStakingRewards, planRewardBatches, decideRewardConversion,
+         sequentiaCoinbaseMaturity } from './pkg/lwk_wasm.js';
 import { btc as btcLib } from './vendor/btc.js';
 import * as perms from './src/permissions.js';
 import * as router from './src/provider-router.js';
@@ -326,7 +327,7 @@ const uiMethods = {
     try {
       totals = rewards.totalsOf(ctx.engine.attributeStakingRewards(
         JSON.stringify(ctx.walletTxs()), JSON.stringify(ctx.stakingKeys()),
-        Number(ctx.tipHeight() || 0), 100)).map((t) => ({
+        Number(ctx.tipHeight() || 0), Number(sequentiaCoinbaseMaturity()))).map((t) => ({
           asset: t.asset, mature: t.mature.toString(), immature: t.immature.toString(),
           outputs: t.outputs, sources: t.sources,
         }));
@@ -480,7 +481,8 @@ function rewardConvertContext() {
   const wollet = engine.getWollet();
   const signer = engine.getSigner();
   return {
-    engine: { attributeStakingRewards, planRewardBatches, decideRewardConversion },
+    engine: { attributeStakingRewards, planRewardBatches, decideRewardConversion,
+              sequentiaCoinbaseMaturity },
     walletTxs: () => {
       let txs = [];
       try { txs = wollet.transactions(); } catch { return []; }

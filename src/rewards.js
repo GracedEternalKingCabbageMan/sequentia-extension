@@ -116,11 +116,18 @@ export async function runAutoConvert(ctx, { dryRun = false } = {}) {
   const report = { ran: false, settings, considered: [], converted: [], errors: [] };
   if (!settings.enabled && !dryRun) return report;
 
+  // The maturity comes from the kit, never a literal here. Sequentia's is 1,000
+  // blocks, not Bitcoin's 100: the protection is a wall-clock one and this chain
+  // runs at 60 seconds. A wallet that guessed 100 would call a reward spendable
+  // 900 blocks early and then build a transaction the chain rejects.
+  const maturity = ctx.engine.sequentiaCoinbaseMaturity
+    ? Number(ctx.engine.sequentiaCoinbaseMaturity())
+    : 1000;
   const rewards = ctx.engine.attributeStakingRewards(
     JSON.stringify(ctx.walletTxs() || []),
     JSON.stringify(ctx.stakingKeys() || []),
     Number(ctx.tipHeight() || 0),
-    100,                       // COINBASE_MATURITY
+    maturity,
   ) || [];
 
   const batches = ctx.engine.planRewardBatches(
