@@ -4,4 +4,4 @@ The WebAssembly build under pkg/ is generated from SWK, a fork of Blockstream's
 Liquid Wallet Kit, which is distributed under a BSD-MIT licence. See the SWK
 repository for its text:
 
-    https://github.com/GracedEternalKingCabbageMan/SWK
+    https://github.com/ConcatenaLabs/SWK
