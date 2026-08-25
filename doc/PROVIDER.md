@@ -226,6 +226,12 @@ transfer agent: the wallet signs and returns, it never submits.
 - `tx` — the full transaction hex the policy server built.
 - `toSign` — the policy server's list, `[{ input, sighash?, pubkey? }]`.
 - `recipientAid` — optional; the account the site says is being paid.
+- `leaf` — which leaf of the enclave's taproot tree this spend takes:
+  `'transfer'` (the default) for a holder moving their own balance, or
+  `'claw'` for an issuer sweeping under a disclosed clawback.
+- `fromAid` — required for `'claw'`: the account id whose enclave output is
+  swept. A clawback spends *that holder's* address, so its leaf and control
+  block come from theirs, while the signature comes from the issuer's key.
 
 The wallet does not trust any of it. It decodes `tx`, resolves every prevout
 from the explorer, recomputes each sighash itself from its own enclave leaf and

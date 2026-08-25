@@ -23,7 +23,7 @@ const TITLES = {
   dexFillOnchain: 'Fill this order on-chain?',
   dexSwapLn: 'Swap over Lightning?',
   openampSignTagged: 'Sign a statement?',
-  openampSignSpend: 'Co-sign a restricted-asset transfer?',
+  openampSignSpend: 'Co-sign a restricted-asset spend?',
 };
 
 function fmtAtoms(atoms, d) {
