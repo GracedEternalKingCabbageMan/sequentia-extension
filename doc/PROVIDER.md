@@ -174,6 +174,72 @@ documents, or `{ done: true, ok: false, error }` when it failed. Without a
 id to a restart can still recover the outcome; `{ done: false, none: true }`
 means no job exists.
 
+## OpenAMP account methods
+
+The wallet holds OpenAMP restricted assets in an enclave account derived at
+`m/5/0`: the x-only public key of that derivation is registered with the policy
+server, which derives the account id (AID) and the 2-of-2 enclave address the
+assets live in from it. These methods let a site work against **that** account —
+the one the user can already see in their wallet — instead of asking them to
+generate a second identity in a browser tab.
+
+What a site may ask for is deliberately narrow, and the boundary is not a
+matter of taste. The enclave key is the user's half of a 2-of-2; a party who
+could choose the 32 bytes it signs would hold a signing oracle over transfer
+sighashes and could drain the account. So there is no method that signs a digest
+the site supplies, and there must never be one. A site gets the public identity,
+a **domain-tagged** statement, and a co-signature on a transaction it hands over
+in full.
+
+### `openampGetIdentity()` — silent, requires connection and an unlocked wallet
+`{ aid, xonly }`: the account id and the x-only enclave public key. Registration
+with the policy server is idempotent and is retried here, so this succeeds on a
+wallet whose enclave was unreachable at startup.
+
+### `openampSignTagged({ tag, statement? , hash?, label? })` — approval per request
+`{ signature, xonly }`: a BIP340 signature over the **tagged** hash
+`sha256(sha256(tag) || sha256(tag) || message)`, which is what a verifier
+recomputes.
+
+Give exactly one of:
+
+- `statement` — UTF-8 text, up to 4096 characters. The message is its UTF-8
+  bytes. This is the form for login challenges, mandates and declarations.
+- `hash` — a 64-hex, 32-byte content address. The message is those raw bytes.
+  This is the form for an e-signature over a document. Pass `label` to name the
+  document in the approval window; it is shown as the site's claim, not as fact.
+
+The tag is the domain separator, and the wallet enforces what it may be: 1–64
+printable non-space characters, and never one that names a digest a consensus
+rule already computes (anything beginning `tap`, `bip0340`, `bip340`, `bip322`
+or `elements`, or containing `sighash`). A statement carrying control characters
+is refused too — the approval window has to be able to show the user exactly
+what they are signing, because reading it is their defence against a statement
+that means more than they assumed.
+
+### `openampSignSpend({ asset, tx, toSign, recipientAid? })` — approval per request
+`{ sigs }`, a map of input index to 128-hex signature, for an enclave spend the
+**site's backend** built and will complete. Use this where the site is the
+transfer agent: the wallet signs and returns, it never submits.
+
+- `asset` — the 64-hex restricted asset id being spent.
+- `tx` — the full transaction hex the policy server built.
+- `toSign` — the policy server's list, `[{ input, sighash?, pubkey? }]`.
+- `recipientAid` — optional; the account the site says is being paid.
+
+The wallet does not trust any of it. It decodes `tx`, resolves every prevout
+from the explorer, recomputes each sighash itself from its own enclave leaf and
+control block, and refuses on any mismatch with a `sighash` the site sent along;
+the signature is over its own recomputation regardless. An input whose `pubkey`
+is not this wallet's enclave key is refused outright. If `recipientAid` is
+given, the wallet asks the policy server for that account's enclave address and
+tells the user whether an output actually pays it — shown, not enforced, so a
+policy server that derives the output script another way cannot break a
+legitimate transfer.
+
+The approval window shows what leaves the account, decoded from the transaction
+rather than described by the site.
+
 ## Events
 
 Subscribe with `window.sequentia.on(event, handler)` and unsubscribe with

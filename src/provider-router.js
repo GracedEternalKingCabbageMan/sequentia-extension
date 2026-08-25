@@ -12,6 +12,7 @@ import * as ln from './ln.js';
 import * as dex from './dex.js';
 import * as A from './assets.js';
 import { sessionMnemonic } from './vault.js';
+import { checkSigningRequest } from './tagpolicy.js';
 import { stGet } from './util.js';
 
 // ---- pending approvals ----
@@ -116,7 +117,8 @@ export async function handleDappRequest(origin, method, params = {}) {
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
           'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'signBtcTaproot', 'prepareBtcSend'],
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'signBtcTaproot', 'prepareBtcSend',
+          'openampGetIdentity', 'openampSignTagged', 'openampSignSpend'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -288,6 +290,91 @@ export async function handleDappRequest(origin, method, params = {}) {
           signature: engine.signStakerMessage(message),
           staker_pubkey: engine.stakerPublicKey(),
         };
+      });
+    }
+
+    // ---- OpenAMP enclave identity ----
+    //
+    // The same m/5/0 account this wallet already holds restricted assets in, so
+    // a site that builds on it (an issuance platform, a transfer agent) works
+    // against the account the user can see in their wallet rather than a second
+    // identity of its own. What a site may ask for is deliberately narrow:
+    // the public identity, a domain-TAGGED statement, and a co-signature on a
+    // transaction it supplies in full. There is no method that signs a digest
+    // the site chose, and there must never be one: the enclave key is one half
+    // of the 2-of-2 restricted assets live in, and a digest signer over it is a
+    // signing oracle that drains the account.
+
+    case 'openampGetIdentity': {
+      // Silent read of public identity: the x-only enclave key and the account
+      // id derived from it. Needs an unlocked wallet because the key is derived,
+      // not stored.
+      await requireUnlockedAndConnected(origin);
+      return await openamp.ensureIdentity();
+    }
+
+    case 'openampSignTagged': {
+      await requireConnected(origin);
+      // Validate before prompting: a request that will be refused should never
+      // reach the user as a decision to make.
+      const req = checkSigningRequest(params);
+      const display = {
+        text: origin + ' asks you to sign a statement with your OpenAMP account key.',
+        rows: [['Domain tag', req.tag]],
+      };
+      if (req.kind === 'statement') {
+        display.message = String(params.statement);
+      } else {
+        display.rows.push(['Document hash', req.messageHex]);
+        if (params.label) display.rows.push(['Named by the site', String(params.label).slice(0, 120)]);
+        display.warning = 'This signs a document hash. Only the site can tell you what document it is; check it there before approving.';
+      }
+      return requestApproval(origin, 'openampSignTagged', display, async () => {
+        await ensureOpenOrThrow();
+        return openamp.signTagged(req.tag, req.messageHex);
+      });
+    }
+
+    case 'openampSignSpend': {
+      // Co-sign an enclave spend the SITE's backend built and will complete.
+      // The site supplies the transaction, never a sighash: every digest signed
+      // is recomputed here from the explorer's prevouts and this wallet's own
+      // enclave leaf, and the decoded effects below are what the user approves.
+      // Unlocked is required up front because the review has to be built before
+      // there is anything to show.
+      await requireUnlockedAndConnected(origin);
+      const { id, review } = await openamp.prepareSpend(params);
+      const rows = [];
+      if (review.recipientAid) {
+        rows.push(['Recipient account', review.recipientAid]);
+        rows.push(['Recipient checked', review.paysRecipient === true
+          ? 'yes — an output pays this account'
+          : review.paysRecipient === false
+            ? 'NO — no output pays this account'
+            : 'could not be checked']);
+      }
+      rows.push(['Asset', review.ticker || 'restricted asset']);
+      rows.push(['Inputs you sign', String(review.inputs)]);
+      const display = {
+        text: origin + ' asks you to co-sign a restricted-asset transfer out of your OpenAMP account.',
+        rows,
+        // An enclave spend can carry outputs in another asset (a converted fee),
+        // so resolve each one on its own: as a restricted asset first, then as
+        // an ordinary Sequentia asset.
+        deltas: review.leaving.map((o) => {
+          let m = A.assetMeta('oamp:' + (o.asset || ''));
+          if (m.ticker === '?') m = A.assetMeta(o.asset || '');
+          return { ticker: m.ticker, atoms: '-' + (o.value ?? '0'), precision: m.precision || 0 };
+        }),
+      };
+      if (review.paysRecipient === false) {
+        display.warning = 'No output of this transaction pays the account the site named. Do not approve unless you know why.';
+      } else if (review.anyConfidential) {
+        display.warning = 'Part of this transaction is confidential and could not be read. Only approve it if you trust this site.';
+      }
+      return requestApproval(origin, 'openampSignSpend', display, async () => {
+        await ensureOpenOrThrow();
+        return openamp.completeSpend(id);
       });
     }
 
