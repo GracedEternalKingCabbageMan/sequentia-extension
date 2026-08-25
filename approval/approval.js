@@ -24,6 +24,7 @@ const TITLES = {
   dexSwapLn: 'Swap over Lightning?',
   openampSignTagged: 'Sign a statement?',
   openampSignSpend: 'Co-sign a restricted-asset spend?',
+  openampSignSupervision: 'Authorize this as the asset\u2019s issuer?',
 };
 
 function fmtAtoms(atoms, d) {

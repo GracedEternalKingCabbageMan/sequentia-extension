@@ -69,3 +69,16 @@ test('refuses an empty or oversized statement', () => {
   assert.throws(() => checkSigningRequest({ tag: 'ok-v1', statement: '' }), /exactly one|1-4096/);
   assert.throws(() => checkSigningRequest({ tag: 'ok-v1', statement: 'x'.repeat(4097) }), /1-4096/);
 });
+
+// The node's own tags are consensus instructions, not statements, and are only
+// ever produced by the method that decodes and displays what it is signing.
+for (const tag of ['Sequentia/SupervisionRecord', 'sequentia/SupervisionUnfreeze', 'Sequentia/Anything']) {
+  test(`refuses the node tag ${tag}`, () => {
+    assert.throws(() => checkSigningRequest({ tag, hash: hex32 }), /reserved tag/);
+  });
+}
+
+test('an ordinary application tag mentioning sequentia is still fine', () => {
+  const r = checkSigningRequest({ tag: 'sequentia-app-v1', statement: 'hello' });
+  assert.equal(r.kind, 'statement');
+});

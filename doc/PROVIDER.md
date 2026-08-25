@@ -246,6 +246,34 @@ legitimate transfer.
 The approval window shows what leaves the account, decoded from the transaction
 rather than described by the site.
 
+### `openampSignSupervision({ kind, asset, address?, txid, vout })` — approval per request
+`{ signature, xonly }`: the authorization for a supervised asset's freeze, pause
+or lift, signed with this wallet's enclave key in its role as the asset's
+**operational key**. Use it where the wallet holds the key a supervised asset
+committed to at issuance.
+
+- `kind` — `'freeze'`, `'unfreeze'` or `'pause'`.
+- `asset` — the 64-hex supervised asset id.
+- `address` — the holder's address being frozen or unfrozen. Omitted for a
+  pause, which names every script at once.
+- `txid` / `vout` — for a freeze or pause, the first input the record's
+  transaction will spend, which is what stops a freeze signature being lifted
+  off the chain and replayed. For a lift, the freeze record's own outpoint,
+  since spending the record is what lifts it.
+
+The site does not choose the bytes. The node's message is a BIP340 tagged hash
+over a short, fixed layout, so the wallet rebuilds it from these fields — it
+derives the script from the address itself and hashes it — and signs its own
+reconstruction, having shown the fields in the approval window. A site that
+misdescribes any of them produces a signature the network rejects, rather than a
+freeze the issuer did not intend.
+
+For the same reason the node's own tag namespace (`sequentia/…`, which is where
+`Sequentia/SupervisionRecord` and `Sequentia/SupervisionUnfreeze` live) is
+refused by `openampSignTagged`: a message under one of those is a consensus
+instruction rather than a statement, and only the method that can decode and
+display it may produce one.
+
 ## Events
 
 Subscribe with `window.sequentia.on(event, handler)` and unsubscribe with

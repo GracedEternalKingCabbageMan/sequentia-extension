@@ -22,7 +22,14 @@
 // A legitimate application tag that happens to start with one of these is
 // collateral damage, and cheap: it renames itself. Signing under one of these
 // by mistake is not cheap.
-const RESERVED_PREFIXES = ['tap', 'bip0340', 'bip340', 'bip322', 'elements'];
+//
+// "sequentia/" is reserved for the same reason one step removed: the node's own
+// tags live there (Sequentia/SupervisionRecord and friends), and a message under
+// one of those is a consensus instruction rather than a statement about the
+// world. Those are produced only by openampSignSpend's supervision sibling,
+// which rebuilds the message from fields it can show the user. A site cannot
+// reach them through the generic signer.
+const RESERVED_PREFIXES = ['tap', 'bip0340', 'bip340', 'bip322', 'elements', 'sequentia/'];
 const RESERVED_SUBSTRINGS = ['sighash'];
 
 const MAX_TAG = 64;
