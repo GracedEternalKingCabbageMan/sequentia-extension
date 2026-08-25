@@ -22,6 +22,8 @@ const TITLES = {
   lnRequestInbound: 'Request inbound Lightning capacity?',
   dexFillOnchain: 'Fill this order on-chain?',
   dexSwapLn: 'Swap over Lightning?',
+  openampSignTagged: 'Sign a statement?',
+  openampSignSpend: 'Co-sign a restricted-asset transfer?',
 };
 
 function fmtAtoms(atoms, d) {
@@ -62,6 +64,7 @@ function render(a) {
     kv.appendChild(k); kv.appendChild(v); det.appendChild(kv);
   };
   if (d.detail) add('Details', d.detail);
+  if (Array.isArray(d.rows)) for (const [k, v] of d.rows) add(k, String(v), /^[0-9a-f]{20,}$/i.test(String(v)));
   if (d.message) { const p = document.createElement('div'); p.className = 'payload'; p.textContent = d.message; det.appendChild(p); }
   if (d.bolt11) { const p = document.createElement('div'); p.className = 'payload'; p.textContent = d.bolt11; det.appendChild(p); }
   if (Array.isArray(d.deltas)) {

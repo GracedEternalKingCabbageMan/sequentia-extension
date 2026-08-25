@@ -28,6 +28,7 @@ A.registerOampAssets(() => oampAssets);
 export function isOampAsset(v) { return typeof v === 'string' && v.startsWith('oamp:'); }
 export function oampId(v) { return v.slice(5); }
 export function aid() { return OAMP_AID; }
+export function xonly() { return OAMP_XONLY; }
 export function assets() { return oampAssets; }
 export function balancesMap() { return oampBalances; }
 export function legacyBalancesMap() { return oampLegacyBalances; }
@@ -221,4 +222,145 @@ export function dropTransfer(id) { drafts.delete(id); }
 
 export async function transferHistory() {
   return (await stGet('local', 'ext.oampTransfers')) || [];
+}
+
+// ── site-built enclave spends ───────────────────────────────────────────────
+//
+// A site whose backend is the transfer agent (SeqPal builds and completes its
+// own policy-co-signed transfers) needs this wallet's half of the 2-of-2, but
+// must not be handed a digest signer: the enclave key is exactly the key a
+// signing oracle over transfer sighashes would drain. So the site supplies the
+// TRANSACTION openampd built, never a sighash, and every digest signed below is
+// recomputed here from explorer-resolved prevouts and this wallet's own enclave
+// leaf — the same non-negotiable mechanism prepareTransfer uses for the wallet's
+// own sends. Any sighash the site did send along is compared and a mismatch
+// aborts; the signature is over our recomputation regardless.
+//
+// The wallet signs and returns; it never submits. Completion stays with the
+// site's backend, which is the party that knows what the transfer means.
+
+// Identity for a site that asked who this wallet is on the enclave ledger.
+// Registration is idempotent and is retried here because oampInit is non-fatal
+// at startup: an enclave that was unreachable then must not leave a site with
+// no identity now.
+export async function ensureIdentity() {
+  if (!OAMP_AID) await oampInit();
+  if (!OAMP_AID) throw new Error('the OpenAMP policy server is unreachable; try again');
+  return { aid: OAMP_AID, xonly: OAMP_XONLY };
+}
+
+// Does any output of this spend pay the stated recipient's enclave address?
+// The transaction pays scripts, not account ids, so the recipient a site names
+// is otherwise just a claim on a screen. This turns it into something the
+// wallet checked. It never decides the outcome: an enclave that cannot be
+// reached, or a policy server that derives the output script some other way,
+// must not block a legitimate transfer, so the answer is shown to the user
+// rather than enforced.
+async function checkRecipient(assetId, recipientAid, outputs) {
+  if (!recipientAid) return null;
+  try {
+    const a = await oampFetch('/v1/users/' + encodeURIComponent(recipientAid) +
+      '/address?asset=' + encodeURIComponent(assetId));
+    const want = String(a.script_pubkey || '').toLowerCase();
+    if (!want) return null;
+    for (const o of outputs || []) {
+      if (o.is_fee) continue;
+      if (String(o.script || '').toLowerCase() === want) return true;
+    }
+    return false;
+  } catch {
+    return null;
+  }
+}
+
+const spends = new Map();
+let spendSeq = 0;
+
+export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
+  if (!OAMP_AID) throw new Error('OpenAMP identity is not registered');
+  const assetId = String(asset || '');
+  if (!/^[0-9a-f]{64}$/i.test(assetId)) throw new Error('asset must be a 32-byte asset id');
+  const txHex = String(tx || '');
+  if (!/^[0-9a-f]+$/i.test(txHex) || txHex.length < 40) throw new Error('a transaction is required');
+  const list = Array.isArray(toSign) ? toSign : [];
+  if (!list.length) throw new Error('there is nothing to sign');
+
+  // Never sign for a key we do not hold: the same guard the policy server
+  // applies, applied before anything is fetched or computed.
+  for (const s of list) {
+    if (s.pubkey && String(s.pubkey).toLowerCase() !== String(OAMP_XONLY).toLowerCase()) {
+      throw new Error('this transfer asks for a signature from a key this wallet does not hold');
+    }
+  }
+
+  const probe = decodeEnclaveSpend(txHex, [], []);
+  const addr = await oampFetch('/v1/users/' + encodeURIComponent(OAMP_AID) +
+    '/address?asset=' + encodeURIComponent(assetId));
+  const leaf = addr.transfer_leaf, control = addr.transfer_control, myScript = addr.script_pubkey;
+  if (!leaf || !control) throw new Error('enclave address is missing the transfer leaf/control');
+  const prevouts = await resolvePrevouts(probe.inputs || []);
+  const genesis = getNetwork().genesisBlockHash();
+
+  const localDigests = {};
+  for (const s of list) {
+    const idx = Number(s.input);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= (probe.inputs || []).length) {
+      throw new Error('input ' + s.input + ' is not an input of this transaction');
+    }
+    const local = enclaveSighash(txHex, idx, prevouts, leaf, control, genesis);
+    if (s.sighash && String(local).toLowerCase() !== String(s.sighash).toLowerCase()) {
+      throw new Error('sighash mismatch at input ' + idx + '; refusing to sign');
+    }
+    localDigests[idx] = local;
+  }
+
+  const effects = decodeEnclaveSpend(txHex, prevouts, [myScript]);
+  const outs = (effects.outputs || []).filter((o) => !o.is_fee);
+  const meta = A.assetMeta('oamp:' + assetId);
+  const paysRecipient = await checkRecipient(assetId, recipientAid, effects.outputs || []);
+
+  const id = 's' + (++spendSeq) + '.' + Date.now();
+  spends.set(id, { localDigests, at: Date.now() });
+  for (const [k, v] of spends) if (Date.now() - v.at > 600000) spends.delete(k);
+
+  const review = {
+    ticker: meta.ticker,
+    precision: meta.precision,
+    inputs: list.length,
+    recipientAid: recipientAid || null,
+    paysRecipient,
+    leaving: outs.filter((o) => !o.mine).map((o) => ({
+      asset: o.asset || null, value: o.value != null ? String(o.value) : null,
+    })),
+    change: outs.filter((o) => o.mine).length,
+    anyConfidential: !!effects.any_confidential,
+  };
+  return { id, review };
+}
+
+// Sign the LOCALLY RECOMPUTED digests and hand the signatures back. The map is
+// keyed by input index, which is the shape openampd's completion endpoint takes.
+export function completeSpend(id) {
+  const e = spends.get(id);
+  if (!e) throw new Error('this review expired; rebuild the transfer');
+  spends.delete(id);
+  const signer = getSigner();
+  const sigs = {};
+  for (const [idx, digest] of Object.entries(e.localDigests)) {
+    sigs[String(idx)] = signer.openampSignSighash(digest);
+  }
+  return { sigs };
+}
+
+// Sign a domain-tagged statement with the enclave key. The tag and message have
+// already been through checkSigningRequest, which is what keeps this from being
+// a digest signer: the key never signs bytes the caller chose outright, only
+// sha256(sha256(tag)||sha256(tag)||message) for a tag that is not a consensus
+// tag. Returns a 128-hex BIP340 signature.
+export function signTagged(tag, messageHex) {
+  const signer = getSigner();
+  if (!signer) throw new Error('the wallet is locked');
+  // Derived, not fetched: signing a statement is a local operation and must not
+  // fail because the policy server happens to be unreachable.
+  return { signature: signer.openampSignTagged(tag, messageHex), xonly: OAMP_XONLY || signer.openampXonlyPubkey() };
 }

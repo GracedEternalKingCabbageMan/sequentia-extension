@@ -28,7 +28,11 @@ confidential `tsqb1…` addresses are an explicit opt-in).
   site at https://sequentiatestnet.com/dex/ among them) can connect, read
   balances, request signatures, and take or place DEX orders
   (`dexFillOnchain`, `dexSwapLn`, `dexMarketOrder`, `dexPlaceLimit`), behind
-  per-origin permissions and per-request approval windows.
+  per-origin permissions and per-request approval windows. A site can also work
+  against the wallet's own OpenAMP account (`openampGetIdentity`,
+  `openampSignTagged`, `openampSignSpend`), so an issuance or transfer-agent
+  platform uses the account the user already holds restricted assets in rather
+  than a second identity generated in a browser tab.
   Protocol spec: [doc/PROVIDER.md](doc/PROVIDER.md).
 - **Staking pool delegation** — the Stake tab lends an existing stake's weight
   to a pool, and takes it back, without moving any coins.
@@ -47,7 +51,13 @@ and a DEX trading UI.
 - Sites never see the seed and cannot sign anything themselves; every
   signature request opens an approval window showing the decoded effect.
 - OpenAMP transfers recompute every sighash locally from explorer-resolved
-  prevouts and abort on any mismatch.
+  prevouts and abort on any mismatch. This holds for spends a website asks the
+  wallet to co-sign too: the site supplies the transaction, never a digest, and
+  the wallet signs only what it recomputed and displayed.
+- A website may only ever have a statement signed under a domain-separation
+  tag, and never one naming a digest a consensus rule computes. The enclave key
+  is half of a 2-of-2, and a digest signer over it would be a signing oracle
+  that drains the account.
 
 ## Install (developer load)
 
