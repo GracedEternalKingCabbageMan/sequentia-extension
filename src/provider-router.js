@@ -355,17 +355,24 @@ export async function handleDappRequest(origin, method, params = {}) {
       }
       rows.push(['Asset', review.ticker || 'restricted asset']);
       rows.push(['Inputs you sign', String(review.inputs)]);
+      const claw = review.leaf === 'claw';
+      if (claw) rows.unshift(['Swept from', review.fromAid]);
       const display = {
-        text: origin + ' asks you to co-sign a restricted-asset transfer out of your OpenAMP account.',
+        text: claw
+          ? origin + ' asks you to authorize a clawback: a disclosed seizure of another holder\u2019s' +
+            ' balance in this asset, which you can only do as its issuer.'
+          : origin + ' asks you to co-sign a restricted-asset transfer out of your OpenAMP account.',
         rows,
         // An enclave spend can carry outputs in another asset (a converted fee),
         // so resolve each one on its own: as a restricted asset first, then as
         // an ordinary Sequentia asset.
-        deltas: review.leaving.map((o) => {
-          let m = A.assetMeta('oamp:' + (o.asset || ''));
-          if (m.ticker === '?') m = A.assetMeta(o.asset || '');
-          return { ticker: m.ticker, atoms: '-' + (o.value ?? '0'), precision: m.precision || 0 };
-        }),
+        deltas: claw
+          ? []
+          : review.leaving.map((o) => {
+              let m = A.assetMeta('oamp:' + (o.asset || ''));
+              if (m.ticker === '?') m = A.assetMeta(o.asset || '');
+              return { ticker: m.ticker, atoms: '-' + (o.value ?? '0'), precision: m.precision || 0 };
+            }),
       };
       if (review.paysRecipient === false) {
         display.warning = 'No output of this transaction pays the account the site named. Do not approve unless you know why.';

@@ -276,7 +276,7 @@ async function checkRecipient(assetId, recipientAid, outputs) {
 const spends = new Map();
 let spendSeq = 0;
 
-export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
+export async function prepareSpend({ asset, tx, toSign, recipientAid, leaf, fromAid }) {
   if (!OAMP_AID) throw new Error('OpenAMP identity is not registered');
   const assetId = String(asset || '');
   if (!/^[0-9a-f]{64}$/i.test(assetId)) throw new Error('asset must be a 32-byte asset id');
@@ -284,6 +284,15 @@ export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
   if (!/^[0-9a-f]+$/i.test(txHex) || txHex.length < 40) throw new Error('a transaction is required');
   const list = Array.isArray(toSign) ? toSign : [];
   if (!list.length) throw new Error('there is nothing to sign');
+  // Which leaf of the enclave's taproot tree this spend takes. 'transfer' is
+  // the holder moving their own balance; 'claw' is an issuer sweeping a
+  // holder's output under a disclosed clawback, which is a spend of THAT
+  // holder's enclave address, so the leaf and control block come from theirs.
+  const path = leaf === 'claw' ? 'claw' : 'transfer';
+  const spendAid = path === 'claw' ? String(fromAid || '') : OAMP_AID;
+  if (path === 'claw' && !/^[0-9a-f]{40}$/i.test(spendAid)) {
+    throw new Error('a clawback needs the account id whose output is being swept');
+  }
 
   // Never sign for a key we do not hold: the same guard the policy server
   // applies, applied before anything is fetched or computed.
@@ -294,10 +303,21 @@ export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
   }
 
   const probe = decodeEnclaveSpend(txHex, [], []);
-  const addr = await oampFetch('/v1/users/' + encodeURIComponent(OAMP_AID) +
+  const addrFor = (a) => oampFetch('/v1/users/' + encodeURIComponent(a) +
     '/address?asset=' + encodeURIComponent(assetId));
-  const leaf = addr.transfer_leaf, control = addr.transfer_control, myScript = addr.script_pubkey;
-  if (!leaf || !control) throw new Error('enclave address is missing the transfer leaf/control');
+  const spendAddr = await addrFor(spendAid);
+  // "Mine" in the decoded effects always means THIS wallet's outputs, whoever
+  // the spend is from: on a clawback the sweep pays the issuer, and that is the
+  // receipt worth showing.
+  const mineAddr = spendAid === OAMP_AID ? spendAddr : await addrFor(OAMP_AID);
+  const leafScript = path === 'claw' ? spendAddr.claw_leaf : spendAddr.transfer_leaf;
+  const control = path === 'claw' ? spendAddr.claw_control : spendAddr.transfer_control;
+  const myScript = mineAddr.script_pubkey;
+  if (!leafScript || !control) {
+    throw new Error(path === 'claw'
+      ? 'this asset discloses no clawback, so there is no clawback leaf to sign under'
+      : 'enclave address is missing the transfer leaf/control');
+  }
   const prevouts = await resolvePrevouts(probe.inputs || []);
   const genesis = getNetwork().genesisBlockHash();
 
@@ -307,7 +327,7 @@ export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
     if (!Number.isInteger(idx) || idx < 0 || idx >= (probe.inputs || []).length) {
       throw new Error('input ' + s.input + ' is not an input of this transaction');
     }
-    const local = enclaveSighash(txHex, idx, prevouts, leaf, control, genesis);
+    const local = enclaveSighash(txHex, idx, prevouts, leafScript, control, genesis);
     if (s.sighash && String(local).toLowerCase() !== String(s.sighash).toLowerCase()) {
       throw new Error('sighash mismatch at input ' + idx + '; refusing to sign');
     }
@@ -324,6 +344,8 @@ export async function prepareSpend({ asset, tx, toSign, recipientAid }) {
   for (const [k, v] of spends) if (Date.now() - v.at > 600000) spends.delete(k);
 
   const review = {
+    leaf: path,
+    fromAid: spendAid,
     ticker: meta.ticker,
     precision: meta.precision,
     inputs: list.length,
