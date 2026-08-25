@@ -9,7 +9,9 @@
 // asset — no privileged label (first principle 3). Route values are prefixed
 // "oamp:<assetId>" to distinguish enclave transfers from on-chain sends.
 
-import { openampComputeAid, enclaveSighash, decodeEnclaveSpend } from '../pkg/lwk_wasm.js';
+import { openampComputeAid, enclaveSighash, decodeEnclaveSpend, Address } from '../pkg/lwk_wasm.js';
+import { sha256 } from './btcsign.js';
+import { supervisionMessage, targetHash, PAUSE_TARGET } from './supervision.js';
 import { OPENAMP, ESPLORA } from './config.js';
 import * as A from './assets.js';
 import { getSigner, getNetwork } from './engine.js';
@@ -385,4 +387,78 @@ export function signTagged(tag, messageHex) {
   // Derived, not fetched: signing a statement is a local operation and must not
   // fail because the policy server happens to be unreachable.
   return { signature: signer.openampSignTagged(tag, messageHex), xonly: OAMP_XONLY || signer.openampXonlyPubkey() };
+}
+
+// ── supervised-asset freezes ────────────────────────────────────────────────
+//
+// A freely-tradable (supervised) asset is governed by an OPERATIONAL key that
+// its asset id commits to, and for an asset issued through a platform like
+// SeqPal that key is this wallet's own enclave key. Freezing a holder means
+// signing a message the node computes over the freeze, which a site could only
+// hand over as 32 opaque bytes -- and a digest chosen by someone else is exactly
+// what this key must never sign.
+//
+// So the wallet rebuilds it. src/supervision.js reproduces the node's layout,
+// which is a BIP340 tagged hash over a short list of readable fields, and what
+// is signed below is the wallet's own reconstruction from the asset, the address
+// and the outpoint shown in the approval window. A site that misdescribes any of
+// them gets a signature the network rejects, not a freeze nobody intended.
+
+const sha256d = (b) => sha256(sha256(b));
+
+// Resolve the script a freeze names. An address is what an issuer types and what
+// the approval window can show, so it is the input; the script is derived here.
+function scriptOf(address) {
+  const a = new Address(String(address));
+  const spk = a.scriptPubkey().toString();
+  if (!/^[0-9a-f]+$/i.test(spk)) throw new Error('could not read that address');
+  return spk;
+}
+
+const supervisions = new Map();
+let supSeq = 0;
+
+export function prepareSupervision({ kind, asset, address, txid, vout }) {
+  if (!OAMP_XONLY) throw new Error('the wallet is locked');
+  const assetId = String(asset || '');
+  if (!/^[0-9a-f]{64}$/i.test(assetId)) throw new Error('asset must be a 32-byte asset id');
+  const action = String(kind || '');
+  if (!['freeze', 'unfreeze', 'pause'].includes(action)) {
+    throw new Error('kind must be freeze, unfreeze or pause');
+  }
+
+  let target = PAUSE_TARGET;
+  let script = null;
+  if (action !== 'pause') {
+    if (!address) throw new Error('an address is required');
+    script = scriptOf(address);
+    target = targetHash(sha256d, script);
+  }
+  const { tag, messageHex } = supervisionMessage({ kind: action, asset: assetId, target, txid, vout });
+
+  const id = 'v' + (++supSeq) + '.' + Date.now();
+  supervisions.set(id, { tag, messageHex, at: Date.now() });
+  for (const [k, v] of supervisions) if (Date.now() - v.at > 600000) supervisions.delete(k);
+
+  const meta = A.assetMeta(assetId);
+  return {
+    id,
+    review: {
+      kind: action,
+      ticker: meta.ticker,
+      asset: assetId,
+      address: action === 'pause' ? null : String(address),
+      script,
+      outpoint: String(txid) + ':' + String(vout),
+    },
+  };
+}
+
+export function completeSupervision(id) {
+  const e = supervisions.get(id);
+  if (!e) throw new Error('this review expired; rebuild the freeze');
+  supervisions.delete(id);
+  const signer = getSigner();
+  if (!signer) throw new Error('the wallet is locked');
+  return { signature: signer.openampSignTagged(e.tag, e.messageHex), xonly: OAMP_XONLY };
 }

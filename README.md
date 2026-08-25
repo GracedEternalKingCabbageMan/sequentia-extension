@@ -30,9 +30,9 @@ confidential `tsqb1…` addresses are an explicit opt-in).
   (`dexFillOnchain`, `dexSwapLn`, `dexMarketOrder`, `dexPlaceLimit`), behind
   per-origin permissions and per-request approval windows. A site can also work
   against the wallet's own OpenAMP account (`openampGetIdentity`,
-  `openampSignTagged`, `openampSignSpend`), so an issuance or transfer-agent
-  platform uses the account the user already holds restricted assets in rather
-  than a second identity generated in a browser tab.
+  `openampSignTagged`, `openampSignSpend`, `openampSignSupervision`), so an
+  issuance or transfer-agent platform uses the account the user already holds
+  restricted assets in rather than a second identity generated in a browser tab.
   Protocol spec: [doc/PROVIDER.md](doc/PROVIDER.md).
 - **Staking pool delegation** — the Stake tab lends an existing stake's weight
   to a pool, and takes it back, without moving any coins.

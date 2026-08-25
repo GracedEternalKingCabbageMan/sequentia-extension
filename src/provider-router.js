@@ -118,7 +118,7 @@ export async function handleDappRequest(origin, method, params = {}) {
           'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
           'broadcast', 'createInvoice', 'payInvoice',
           'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'signBtcTaproot', 'prepareBtcSend',
-          'openampGetIdentity', 'openampSignTagged', 'openampSignSpend'],
+          'openampGetIdentity', 'openampSignTagged', 'openampSignSpend', 'openampSignSupervision'],
         events: ['accountsChanged', 'disconnect'],
       };
 
@@ -382,6 +382,37 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'openampSignSpend', display, async () => {
         await ensureOpenOrThrow();
         return openamp.completeSpend(id);
+      });
+    }
+
+    case 'openampSignSupervision': {
+      // Authorize a freeze, a pause or a lift on a supervised asset this wallet
+      // is the operational key for. As everywhere else, the site does not choose
+      // the bytes: the wallet rebuilds the node's message from the asset, the
+      // address and the outpoint below, and signs its own reconstruction. A site
+      // that misdescribes any of them produces a signature the network rejects
+      // rather than a freeze the issuer did not intend.
+      await requireUnlockedAndConnected(origin);
+      const { id, review } = openamp.prepareSupervision(params);
+      const verb = review.kind === 'freeze' ? 'freeze a holder of'
+        : review.kind === 'pause' ? 'PAUSE every holding of'
+        : 'lift the freeze on a holder of';
+      const rows = [
+        ['Action', review.kind === 'freeze' ? 'Freeze' : review.kind === 'pause' ? 'Pause the whole asset' : 'Lift a freeze'],
+        ['Asset', (review.ticker || 'supervised asset') + ' (' + review.asset.slice(0, 12) + '…)'],
+      ];
+      if (review.address) rows.push(['Address', review.address]);
+      rows.push([review.kind === 'unfreeze' ? 'Freeze record' : 'Bound to input', review.outpoint]);
+      const display = {
+        text: origin + ' asks you to ' + verb + ' this asset, as its issuer. The network enforces it.',
+        rows,
+      };
+      if (review.kind === 'pause') {
+        display.warning = 'A pause stops EVERY single-owner holding of this asset at once, not one address.';
+      }
+      return requestApproval(origin, 'openampSignSupervision', display, async () => {
+        await ensureOpenOrThrow();
+        return openamp.completeSupervision(id);
       });
     }
 
