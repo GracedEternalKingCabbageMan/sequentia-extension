@@ -545,7 +545,7 @@ export async function pignusBtcSignTaproot(sighashHex) {
   if (!phrase) throw new Error('the wallet is locked');
   return signSchnorr(_bsHex(pignusSecret(phrase)), String(sighashHex).toLowerCase());
 }
-export async function prepareBtcSend(address, amountSats) {
+export async function pignusPrepareBtcFunding(address, amountSats) {
   if (!btcW) throw new Error('the wallet is locked');
   const p = await btcW.prepare(mnemonic, address, BigInt(amountSats), BTC_FEERATE);
   return { txid: String(p.txid), vout: p.vout ?? 0, hex: p.hex };

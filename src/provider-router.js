@@ -476,7 +476,7 @@ export async function handleDappRequest(origin, method, params = {}) {
       return requestApproval(origin, 'prepareBtcSend', {
         text: origin + ' asks to fund a Bitcoin collateral output.',
         detail: 'Prepare ' + (Number(amount) / 1e8) + ' BTC to ' + address + '. It is broadcast only after the loan\u2019s release is verified.',
-      }, async () => { await ensureOpenOrThrow(); return await engine.prepareBtcSend(address, amount); });
+      }, async () => { await ensureOpenOrThrow(); return await engine.pignusPrepareBtcFunding(address, amount); });
     }
     case 'signBtcTaproot': {
       await requireConnected(origin);
