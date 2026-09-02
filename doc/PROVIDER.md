@@ -80,11 +80,26 @@ chains); `confidential: true` returns the opt-in blinded `tsqb1…` form.
 
 ### `signPset({ pset })` — approval per request
 `pset` is a base64 PSET (Elements partially signed transaction). The wallet
-shows its decoded effect on the user's balances when it can decode it, signs
-with the wallet keys, and returns `{ pset }` — signed but **not** finalized or
-broadcast, so a DEX can compose partial signatures (resting orders, swaps).
-Per-input sighash flags embedded in the PSET are honored, which is what makes
-signed resting orders (SINGLE|ANYONECANPAY-style intents) possible.
+shows the transaction's effect on the user's balances, signs the inputs it
+owns, and returns `{ pset }` — signed but **not** finalized or broadcast, so a
+DEX can compose partial signatures (resting orders, swaps). Per-input sighash
+flags embedded in the PSET are honored, which is what makes signed resting
+orders (SINGLE|ANYONECANPAY-style intents) possible.
+
+A site builds a PSET knowing which outputs it spends but not which of them
+belong to this wallet: it has no xpub and no derivation paths. The wallet fills
+its own key origins in before signing and takes them back out afterwards, so
+the PSET a site sends needs nothing beyond `PSBT_IN_WITNESS_UTXO` per input.
+An input the site pre-witnessed (a covenant spend, which needs no signature) is
+left exactly as it arrived. `getCapabilities().features` carries
+`pset-site-built` on builds that do this; a site that must know can check for
+it. When none of the inputs belong to this wallet the call fails with "this
+wallet holds none of the inputs in that transaction".
+
+A fully transparent PSET — what a covenant settlement looks like — is described
+from its bytes, since the wallet's own decoder handles blinded transactions
+only. The approval window shows the same "You send / You receive" lines either
+way.
 
 ### `signMessage({ message })` — approval per request
 `{ signature }` over the given UTF-8 message with the wallet's key.

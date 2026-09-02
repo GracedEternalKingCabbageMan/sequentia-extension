@@ -21,6 +21,7 @@ import { settleFill as covSettleFill, planFillFromMatched } from '../vendor/cove
 import { makeCovenantHooks, revHexStr } from '../vendor/covenant-fill-host.js';
 import * as A from './assets.js';
 import * as engine from './engine.js';
+import { stripBip32 } from './psetbytes.js';
 import * as ln from './ln.js';
 import { BASE, ESPLORA, DEFAULT_FEERATE, EXCHANGE_RATE_SCALE } from './config.js';
 import { fmtAtoms, stGet, stSet } from './util.js';
@@ -597,67 +598,3 @@ export async function jobResult(jobId) {
 // ---- PSET bip32-derivation stripping (verbatim from the proven web-wallet
 // path: the maker's co-signed PSET carries our bip32 derivations; the node
 // rejects finalized PSETs that still carry them) ----
-function b64ToBytes(b64) {
-  const bin = atob(b64.trim()); const a = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i);
-  return a;
-}
-function bytesToB64(a) {
-  let s = ''; for (let i = 0; i < a.length; i++) s += String.fromCharCode(a[i]);
-  return btoa(s);
-}
-export function stripBip32(b64) {
-  const b = b64ToBytes(b64);
-  const magic = [0x70, 0x73, 0x65, 0x74, 0xff];
-  for (let i = 0; i < 5; i++) if (b[i] !== magic[i]) throw new Error('not a PSET');
-  let i = 5;
-  const out = [0x70, 0x73, 0x65, 0x74, 0xff];
-  const rdVarint = () => {
-    const x = b[i++];
-    if (x < 0xfd) return x;
-    if (x === 0xfd) { const v = b[i] | (b[i + 1] << 8); i += 2; return v; }
-    if (x === 0xfe) { const v = (b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24)) >>> 0; i += 4; return v; }
-    let v = 0; for (let k = 0; k < 8; k++) v += b[i + k] * Math.pow(2, 8 * k); i += 8; return v;
-  };
-  const emitVarint = (v) => {
-    if (v < 0xfd) out.push(v);
-    else if (v <= 0xffff) { out.push(0xfd, v & 0xff, (v >> 8) & 0xff); }
-    else if (v <= 0xffffffff) { out.push(0xfe, v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >>> 24) & 0xff); }
-    else { out.push(0xff); for (let k = 0; k < 8; k++) { out.push(Math.floor(v / Math.pow(2, 8 * k)) & 0xff); } }
-  };
-  const copyMap = (dropTypes) => {
-    while (true) {
-      const klen = rdVarint();
-      if (klen === 0) { out.push(0x00); break; }
-      const keyStart = i; const keyType = b[i];
-      i += klen;
-      const vlen = rdVarint();
-      const valStart = i; i += vlen;
-      if (dropTypes.has(keyType)) continue;
-      emitVarint(klen); for (let k = keyStart; k < keyStart + klen; k++) out.push(b[k]);
-      emitVarint(vlen); for (let k = valStart; k < valStart + vlen; k++) out.push(b[k]);
-    }
-  };
-  let inCount = 0, outCount = 0;
-  {
-    let j = 5;
-    const pv = () => {
-      const x = b[j++];
-      if (x < 0xfd) return x;
-      if (x === 0xfd) { const v = b[j] | (b[j + 1] << 8); j += 2; return v; }
-      if (x === 0xfe) { const v = (b[j] | (b[j + 1] << 8) | (b[j + 2] << 16) | (b[j + 3] << 24)) >>> 0; j += 4; return v; }
-      let v = 0; for (let k = 0; k < 8; k++) v += b[j + k] * Math.pow(2, 8 * k); j += 8; return v;
-    };
-    while (true) {
-      const kl = pv(); if (kl === 0) break;
-      const kt = b[j]; j += kl;
-      const vl = pv(); const vs = j; j += vl;
-      if (kt === 0x04) { let v = 0; for (let k = 0; k < vl; k++) v += b[vs + k] * Math.pow(2, 8 * k); inCount = v; }
-      if (kt === 0x05) { let v = 0; for (let k = 0; k < vl; k++) v += b[vs + k] * Math.pow(2, 8 * k); outCount = v; }
-    }
-  }
-  copyMap(new Set([0x01]));
-  for (let n = 0; n < inCount; n++) copyMap(new Set([0x06]));
-  for (let n = 0; n < outCount; n++) copyMap(new Set([0x02]));
-  return bytesToB64(Uint8Array.from(out));
-}
