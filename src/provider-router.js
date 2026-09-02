@@ -119,6 +119,11 @@ export async function handleDappRequest(origin, method, params = {}) {
           'broadcast', 'createInvoice', 'payInvoice',
           'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'getBtcAddress', 'signBtcTaproot', 'prepareBtcSend',
           'openampGetIdentity', 'openampSignTagged', 'openampSignSpend', 'openampSignSupervision'],
+        // What this build can do beyond the method names, for sites that have
+        // to know before they build something: 'pset-site-built' means
+        // signPset fills in this wallet's key origins itself, so a PSET a site
+        // composed (with only the outputs it spends) can be signed here.
+        features: ['pset-site-built'],
         events: ['accountsChanged', 'disconnect'],
       };
 

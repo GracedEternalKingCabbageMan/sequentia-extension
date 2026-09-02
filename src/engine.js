@@ -21,6 +21,7 @@ import { sessionMnemonic } from './vault.js';
 import { pignusSecret, xOnlyPubkey, signSchnorr } from './btcsign.js';
 import { ESPLORA, T4_API, DEFAULT_FEERATE, BTC_FEERATE } from './config.js';
 import { parseAtoms, fmtAtoms, stGet, stSet } from './util.js';
+import { describeTransparent, stripBip32 } from './psetbytes.js';
 
 // ---- module state (rebuilt lazily after a service-worker restart) ----
 let wasmReady = null;
@@ -505,15 +506,39 @@ export function utxosSerialized() {
 }
 
 // ---- signing surfaces for the website provider ----
-// Sign a PSET (site-supplied, e.g. a future DEX order/swap) and return it
+// Sign a PSET a website built (a DEX order, a covenant fill) and return it
 // WITHOUT finalizing or broadcasting — the site composes the rest.
+//
+// A site knows the outputs it is spending but not which of them are ours: it
+// has no xpub and no derivation paths. The signer, meanwhile, signs an input
+// only when that input carries THIS wallet's key origin. So the origins are
+// filled in here, from the wallet's own descriptor, before signing, and taken
+// back out afterwards — they say which keys this wallet derives, which is
+// nobody else's business, and neither the signature nor finalizing needs them.
 export async function signPset(psetB64) {
   if (!signer) throw new Error('wallet is locked');
-  const pset = new Pset(psetB64);
-  const signed = signer.sign(pset);
-  return signed.toString();
+  return withWollet(async () => {
+    const pset = new Pset(psetB64);
+    pset.addDetails(wollet);
+    let signed;
+    try {
+      signed = signer.sign(pset);
+    } catch (e) {
+      if (/No signature added/i.test(String(e && e.message))) {
+        throw new Error('this wallet holds none of the inputs in that transaction');
+      }
+      throw e;
+    }
+    return stripBip32(signed.toString());
+  });
 }
-// Best-effort decode of a PSET's effect on THIS wallet for the approval UI.
+// What a PSET does to THIS wallet, for the approval window.
+//
+// The wallet's own decoder handles a blinded transaction. A fully transparent
+// one it refuses ("Input #N is not blinded"), and those are exactly the
+// transactions a covenant settles, so they are read from the bytes instead —
+// with the wallet's key origins filled in first, so that what is ours can be
+// told from what is not.
 export function describePset(psetB64) {
   try {
     const pset = new Pset(psetB64);
@@ -526,7 +551,16 @@ export function describePset(psetB64) {
     try { const f = bal.fee(); if (f != null) fee = String(f); } catch {}
     return { deltas, fee };
   } catch {
-    return null;   // transparent outputs can make psetDetails throw; the UI says "review the raw PSET"
+    try {
+      const pset = new Pset(psetB64);
+      pset.addDetails(wollet);
+      const t = describeTransparent(pset.toString());
+      const deltas = {};
+      for (const [h, v] of Object.entries(t.deltas)) if (v !== 0n) deltas[h] = String(v);
+      return { deltas, fee: t.fee == null ? null : String(t.fee), transparent: true };
+    } catch {
+      return null;
+    }
   }
 }
 export function signMessage(message) {
