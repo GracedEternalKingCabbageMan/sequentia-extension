@@ -538,6 +538,16 @@ export async function pignusBtcPubkey() {
   if (!phrase) throw new Error('the wallet is locked');
   return xOnlyPubkey(_bsHex(pignusSecret(phrase)));
 }
+// A parent-chain address this wallet actually owns, for a site that has to
+// name one in a script -- a cross-chain loan names where the collateral comes
+// back to, and it is baked in before anything is funded. Handing back a raw key
+// instead would produce an output the wallet cannot see or spend.
+export function btcReceiveAddress(index = null) {
+  if (!btcW) throw new Error('the wallet is locked');
+  const i = index == null ? btcScanState.externalNext : Number(index);
+  const address = btcW.address(mnemonic, false, i);
+  return { address, index: i };
+}
 export async function pignusBtcSignTaproot(sighashHex) {
   if (!/^[0-9a-fA-F]{64}$/.test(String(sighashHex || '')))
     throw new Error('the sighash must be 32 bytes of hex');

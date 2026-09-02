@@ -117,7 +117,7 @@ export async function handleDappRequest(origin, method, params = {}) {
         methods: ['connect', 'getAccounts', 'getNetwork', 'getBalances', 'getAddress',
           'signPset', 'signMessage', 'signStakerMessage', 'getStakerPublicKey',
           'broadcast', 'createInvoice', 'payInvoice',
-          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'signBtcTaproot', 'prepareBtcSend',
+          'getUtxos', 'lnChannels', 'lnRequestInbound', 'dexFillOnchain', 'dexSwapLn', 'dexJobResult', 'dexMarketOrder', 'dexPlaceLimit', 'getBtcPublicKey', 'getBtcAddress', 'signBtcTaproot', 'prepareBtcSend',
           'openampGetIdentity', 'openampSignTagged', 'openampSignSpend', 'openampSignSupervision'],
         events: ['accountsChanged', 'disconnect'],
       };
@@ -464,6 +464,10 @@ export async function handleDappRequest(origin, method, params = {}) {
       }, async () => { await ensureOpenOrThrow(); return await ln.payInvoice({ kind, bolt11 }); });
     }
 
+    case 'getBtcAddress': {
+      await requireUnlockedAndConnected(origin);
+      return engine.btcReceiveAddress(params.index ?? null);
+    }
     case 'getBtcPublicKey': {
       await requireUnlockedAndConnected(origin);
       return { pubkey_x: await engine.pignusBtcPubkey() };
